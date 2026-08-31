@@ -161,8 +161,12 @@ Vendored `chatmail/core` at **`v2.59.0`** (`e322fdf`) into `core/` via `git subt
 **Phase 0.5 — Server template.**
 `server/`: adapt chatmail relay's Postfix/Dovecot/OpenDKIM/filtermail configuration to traditional account provisioning, drop the relay-specific pieces listed above, and produce a docker-compose variant. This lands early because every later phase's integration tests run against it. *Gate:* `docker compose up` yields a working E2EE-enforcing mail server that a Delta Chat client can also use, and CI can provision accounts against it.
 
-**Phase 1 — Raw MIME retention.**
-`email/rawmime.rs`: content-addressed blob store, retention config (short default → indefinite), expiry in core's existing housekeeping job. Hook the store into `receive_imf` and the send path. Server retention policy (delete-after-download / keep N days / never). CLI: `show --raw`, `retention set`. *Gate:* a message survives round-trip with byte-identical raw MIME, and expires on schedule.
+**Phase 1 — Raw MIME retention.** *(engine complete)*
+`core/src/email/rawmime.rs`: retention over core's existing content-addressed `BlobObject::create_and_deduplicate_from_bytes`, config key `raw_mime_retention_days` (0 = off, N days, negative = forever; default 30), migration 164, expiry wired into core's housekeeping *before* reference collection so freed blobs are reclaimed in the same pass. Hooked into `receive_imf_inner`'s success exit and `create_send_msg_jobs`.
+
+*Gate met:* 15 tests in `email::rawmime::rawmime_tests`, including byte-identical round-trip, expiry on schedule, `forever` never expiring, housekeeping keeping retained blobs and reclaiming expired ones, and dedup of identical messages. Full suite 1158/1158.
+
+*Deferred:* the CLI (`show --raw`, `retention set`) moves to Phase 6, where `cli/` is actually built; adding a crate here would duplicate that work. Server retention policy (delete-after-download / keep N days / never) is still outstanding and moves to Phase 4, next to the encryption-policy work it shares a settings surface with.
 
 **Phase 2 — Email message model.**
 `email/recipients.rs` + `email/threading.rs`. Per-message subject on receive and send; To/CC/BCC recipient sets; JWZ threading. Compose API takes a subject and a recipient set rather than a chat. *Gate:* send a subject-bearing, CC'd message that threads correctly in Thunderbird, and thread an imported real-world mailbox correctly.

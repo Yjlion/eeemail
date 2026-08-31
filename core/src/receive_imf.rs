@@ -1020,6 +1020,16 @@ UPDATE msgs SET state=? WHERE
         }
     }
 
+    // eeemail: retain the original bytes. Best-effort -- raw MIME is an
+    // enhancement, and failing to keep it must never fail reception.
+    for &msg_id in &received_msg.msg_ids {
+        crate::email::rawmime::store(context, msg_id, imf_raw)
+            .await
+            .context("failed to retain raw MIME")
+            .log_err(context)
+            .ok();
+    }
+
     Ok(Some(received_msg))
 }
 

@@ -40,6 +40,32 @@ the user may extend to indefinite.
   decrypted content alone.
 - Users who need archival fidelity — or who may need to prove what they
   received — can set retention to indefinite and accept the disk cost.
+
+### As implemented (Phase 1)
+
+`core/src/email/rawmime.rs`, config key `raw_mime_retention_days`:
+
+| Value | Meaning |
+|---|---|
+| `0` | Do not retain |
+| `N > 0` | Keep for N days |
+| negative (canonically `-1`) | Keep forever (stored as SQL `NULL`) |
+| default | `30` — transport plus a normal reply window |
+
+Bytes go into the blobdir through core's existing
+`BlobObject::create_and_deduplicate_from_bytes`, which is content-addressed, so
+duplicate messages cost one copy. Names are stored `$BLOBDIR/`-prefixed to match
+the convention `http_cache` already uses, which is what lets housekeeping's
+`maybe_add_file` see the reference.
+
+Two behaviours worth stating because they are choices, not accidents:
+
+- **Changing the setting is not retroactive.** Expiry is computed once, at
+  store time. Shortening retention applies to future messages; it does not
+  silently destroy originals the user already has.
+- **Trashed messages get nothing.** The hook sits on the single success exit of
+  `receive_imf_inner`, not on the `trash()` path, so a message the user's policy
+  ignored does not leave its bytes on disk.
 - At-rest database encryption is deliberately **not** enabled initially, but it
   is much closer to hand than first assumed. Core already links
   `rusqlite/bundled-sqlcipher-vendored-openssl` and `Sql::open` takes a

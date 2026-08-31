@@ -66,6 +66,22 @@ can tell them apart.
 | `core/src/imap/idle.rs` | `#[cfg(feature = "relay-provisioning")]` on the `maybe_add_additional_relays` spawn before IDLE. | Same. | [0007](adr/0007-server-template.md) |
 | `core/src/qr/qr_tests.rs` | `#[cfg(feature = "relay-provisioning")]` on `test_decode_account`. | The test asserts `DCACCOUNT:` parses; meaningless once gated off. | [0007](adr/0007-server-template.md) |
 
+| `core/src/sql/migrations.rs` | Migration 164: `CREATE TABLE raw_mime`. | Raw MIME retention storage. | [0004](adr/0004-local-store-and-raw-mime.md) |
+| `core/src/config.rs` | Added `Config::RawMimeRetentionDays` (default `30`). | Retention period: 0 = off, negative = forever. | [0004](adr/0004-local-store-and-raw-mime.md) |
+| `core/src/lib.rs` | `pub mod email;`. | Registers our layer. | [0001](adr/0001-fork-chatmail-core.md) |
+| `core/src/receive_imf.rs` | One best-effort `email::rawmime::store` call at the single success exit of `receive_imf_inner`. | Retains incoming originals. Deliberately not on the `trash()` path: an ignored message has no content worth keeping. | [0004](adr/0004-local-store-and-raw-mime.md) |
+| `core/src/chat.rs` | One best-effort `email::rawmime::store` call in `create_send_msg_jobs`, before the SMTP-queue transaction. | Retains outgoing originals so a sent message can be viewed as source like a received one. | [0004](adr/0004-local-store-and-raw-mime.md) |
+| `core/src/context.rs` | Added `raw_mime_retention_days` to the `get_info` map. | Upstream's `test_get_info_completeness` requires every `Config` key to appear in `get_info` or be explicitly skipped. Included rather than skipped because it is exactly what you check when "view source" is unavailable on an older message. | [0004](adr/0004-local-store-and-raw-mime.md) |
+| `core/src/sql.rs` | `email::rawmime::expire` call in `housekeeping`, plus a `SELECT blobname FROM raw_mime` block in `remove_unused_files`. | Expiry must run **before** reference collection so freed blobs are reclaimed in the same pass; the SELECT stops housekeeping deleting blobs that are still retained. Mirrors the existing `http_cache` block exactly. | [0004](adr/0004-local-store-and-raw-mime.md) |
+
+Conflict guidance for the raw-MIME hooks: all three are single call sites whose
+*intent* is what matters -- retain originals on receive and send, expire them in
+housekeeping. If upstream restructures `receive_imf_inner`'s exits or
+`create_send_msg_jobs`, re-place the call rather than replaying the diff. The
+ordering constraint in `sql.rs` (expire before `remove_unused_files`) is load
+bearing and covered by
+`email::rawmime::rawmime_tests::test_housekeeping_keeps_retained_blob_but_reclaims_expired`.
+
 Conflict guidance for `core/Cargo.toml`: upstream edits `[features]` rarely, but
 when it does, keep both sides -- our three feature keys are additive and our only
 change to `default` is appending to the existing list.

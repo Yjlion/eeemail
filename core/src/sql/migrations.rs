@@ -2610,6 +2610,24 @@ UPDATE msgs SET state=24 WHERE state=18; -- Change OutPreparing to OutFailed.
         .await?;
     }
 
+    // eeemail: original MIME bytes, retained for a configurable period.
+    // docs/adr/0004-local-store-and-raw-mime.md
+    inc_and_check(&mut migration_version, 164)?;
+    if dbversion < migration_version {
+        sql.execute_migration(
+            "CREATE TABLE raw_mime (
+                msg_id INTEGER PRIMARY KEY NOT NULL, -- msgs.id this MIME belongs to
+                blobname TEXT NOT NULL, -- content-addressed file in the blobdir
+                size INTEGER NOT NULL, -- original byte length
+                stored_at INTEGER NOT NULL, -- when it was retained
+                expires_at INTEGER -- NULL means keep forever
+            ) STRICT;
+            CREATE INDEX raw_mime_index1 ON raw_mime (expires_at) WHERE expires_at IS NOT NULL;",
+            migration_version,
+        )
+        .await?;
+    }
+
     let new_version = sql
         .get_raw_config_int(VERSION_CFG)
         .await?

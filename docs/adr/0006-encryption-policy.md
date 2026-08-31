@@ -31,6 +31,22 @@ encryption and reply encrypted where they can.
 Per-contact overrides sit on top of the global mode, in
 `contact_policy(contact_id, ..., encryption_mode)`.
 
+## Implementation note (found in Phase 1)
+
+Upstream core declares `ForceEncryption` with `#[strum(props(default = "1"))]`
+in `core/src/config.rs` — **strict is upstream's default**, not opportunistic.
+With it on, `receive_imf_inner` discards incoming cleartext outright
+(`core/src/receive_imf.rs`: "Fetched unencrypted message, ignoring") and
+`create_send_msg_jobs` refuses to send to a contact with no key.
+
+So adopting an opportunistic default is a deliberate change to that config
+default, not merely a setting we expose. That is Phase 4 work, but it is worth
+knowing now: until it lands, any test involving cleartext must call the
+existing `TestContext::allow_unencrypted()` helper, and our three modes map
+onto `ForceEncryption` as strict = on, opportunistic/lenient = off — meaning
+the opportunistic/lenient distinction needs state of its own rather than
+riding on this one flag.
+
 ## Consequences
 
 - Reach is preserved: eeemail can talk to anyone with an email address, which is

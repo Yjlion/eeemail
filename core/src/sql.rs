@@ -804,6 +804,12 @@ pub async fn housekeeping(context: &Context) -> Result<()> {
         .log_err(context)
         .ok();
 
+    // eeemail: must run before remove_unused_files so that blobs freed by
+    // expiry are reclaimed in this same pass rather than the next one.
+    if let Err(err) = crate::email::rawmime::expire(context).await {
+        warn!(context, "Housekeeping: cannot expire raw MIME: {:#}.", err);
+    }
+
     if let Err(err) = remove_unused_files(context).await {
         warn!(
             context,
@@ -1047,6 +1053,26 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
         )
         .await
         .context("Failed to SELECT blobname FROM http_cache")?;
+
+    // eeemail: retained raw MIME blobs are in use until their row expires.
+    context
+        .sql
+        .query_map(
+            "SELECT blobname FROM raw_mime",
+            (),
+            |row| {
+                let row: String = row.get(0)?;
+                Ok(row)
+            },
+            |rows| {
+                for row in rows {
+                    maybe_add_file(&mut files_in_use, &row?);
+                }
+                Ok(())
+            },
+        )
+        .await
+        .context("Failed to SELECT blobname FROM raw_mime")?;
 
     info!(context, "{} files in use.", files_in_use.len());
     /* go through directories and delete unused files */

@@ -3014,6 +3014,14 @@ WHERE id=?
         )
         .await?;
 
+    // eeemail: retain the bytes we are about to put on the wire, so a sent
+    // message can be viewed as source and re-verified like a received one.
+    crate::email::rawmime::store(context, msg.id, rendered_msg.message.as_bytes())
+        .await
+        .context("failed to retain outgoing raw MIME")
+        .log_err(context)
+        .ok();
+
     let trans_fn = |t: &mut rusqlite::Transaction| {
         let mut row_ids = Vec::<i64>::new();
 

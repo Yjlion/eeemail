@@ -69,6 +69,8 @@ pub mod context;
 mod decrypt;
 pub mod download;
 mod e2ee;
+/// eeemail's email-client layer (not forked from upstream).
+pub mod email;
 pub mod ephemeral;
 mod imap;
 pub mod imex;

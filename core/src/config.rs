@@ -390,6 +390,23 @@ pub enum Config {
     #[strum(props(default = "0"))]
     DownloadLimit,
 
+    /// eeemail: how long to retain the original MIME bytes of a message, in
+    /// days.
+    ///
+    /// Decrypted content is always stored and never expires; this governs only
+    /// the raw original, which is what "view source", signature
+    /// re-verification and standards-conformant export need.
+    ///
+    /// 0 = do not retain. Negative (canonically -1) = keep forever.
+    ///
+    /// The default of 30 days covers transport and a normal reply window,
+    /// which is when the original is actually useful, without doubling disk
+    /// usage indefinitely.
+    ///
+    /// See docs/adr/0004-local-store-and-raw-mime.md.
+    #[strum(props(default = "30"))]
+    RawMimeRetentionDays,
+
     /// Enable sending and executing (applying) sync messages. Sending requires `BccSelf` to be set
     /// and `Bot` unset.
     ///

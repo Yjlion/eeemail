@@ -1043,6 +1043,14 @@ impl Context {
             "team_profile",
             self.get_config_bool(Config::TeamProfile).await?.to_string(),
         );
+        // eeemail: how long original MIME bytes are kept. Diagnostic gold when
+        // a user asks why "view source" is unavailable on an older message.
+        res.insert(
+            "raw_mime_retention_days",
+            self.get_config_int(Config::RawMimeRetentionDays)
+                .await?
+                .to_string(),
+        );
         res.insert(
             "force_encryption",
             self.get_config_bool(Config::ForceEncryption)
