@@ -1,0 +1,101 @@
+name: CI
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+env:
+  RUSTFLAGS: -Dwarnings
+  # Keep in sync with core/.github/workflows/ci.yml so our fork is linted the
+  # same way upstream lints itself; a version skew shows up as phantom
+  # clippy/rustfmt diffs on every upstream merge.
+  RUST_VERSION: 1.97.1
+  MSRV: 1.89.0
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          show-progress: false
+          persist-credentials: false
+      - run: rustup toolchain install $RUST_VERSION --profile minimal --component rustfmt --component clippy
+      - run: rustup override set $RUST_VERSION
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      - name: rustfmt
+        working-directory: core
+        run: cargo fmt --all -- --check
+      - name: clippy
+        working-directory: core
+        run: cargo clippy --workspace --all-targets --all-features
+
+  fork-discipline:
+    name: Fork discipline
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          show-progress: false
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Every patched upstream file must be in the ledger
+        run: ./scripts/check-fork-patches.sh
+
+  msrv:
+    name: MSRV ${{ github.workflow }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          show-progress: false
+          persist-credentials: false
+      - run: rustup toolchain install $MSRV --profile minimal
+      - run: rustup override set $MSRV
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      - name: cargo check
+        working-directory: core
+        run: cargo check --workspace --all-targets
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          show-progress: false
+          persist-credentials: false
+      - run: rustup toolchain install $RUST_VERSION --profile minimal
+      - run: rustup override set $RUST_VERSION
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      # nextest, not `cargo test`: deltachat-time mocks the clock via a
+      # process-global static whose shift accumulates, so a single-process run
+      # fails on a green tree. nextest isolates each test in its own process.
+      # See docs/testing.md.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - name: cargo nextest
+        working-directory: core
+        run: cargo nextest run --workspace --locked
+      - name: doctests
+        working-directory: core
+        run: cargo test --workspace --locked --doc

@@ -4,7 +4,9 @@ Each ADR records one decision, the context that forced it, and the consequences
 we accepted. They are immutable once accepted: to change a decision, add a new
 ADR that supersedes the old one rather than editing history.
 
-Full design: [`../DESIGN.md`](../DESIGN.md)
+Full design: [`../DESIGN.md`](../DESIGN.md) ·
+Build & fork workflow: [`../development.md`](../development.md) ·
+Testing: [`../testing.md`](../testing.md)
 
 | # | Decision | Status |
 |---|---|---|

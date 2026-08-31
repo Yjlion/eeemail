@@ -51,3 +51,17 @@ if we want it at all.
   server's quirks.
 - We inherit maintenance of a server configuration, which is a real ongoing
   cost, and a security-sensitive one.
+
+## Client-side counterpart
+
+Dropping relay provisioning on the server means the client must drop its half
+too. At our fork point (`v2.59.0`) that is:
+
+- `core/src/automatic_relay_management.rs` -- relay selection and migration.
+  (Renamed to `autorelay.rs` on upstream `main` after our fork point; expect
+  this to move on the next merge.)
+- The `DCACCOUNT:` QR scheme in `core/src/qr.rs`, which is how a relay hands out
+  an account from a scanned code.
+
+Both are gated off by the `relay-provisioning` cargo feature
+([0001](0001-fork-chatmail-core.md) -- gate first, delete later).

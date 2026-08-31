@@ -40,6 +40,14 @@ the user may extend to indefinite.
   decrypted content alone.
 - Users who need archival fidelity — or who may need to prove what they
   received — can set retention to indefinite and accept the disk cost.
-- At-rest database encryption is deliberately **not** in the initial scope.
-  Delta Chat does not encrypt its local store either. It is a later opt-in
-  feature, tracked in Phase 8 alongside encrypted cloud backup.
+- At-rest database encryption is deliberately **not** enabled initially, but it
+  is much closer to hand than first assumed. Core already links
+  `rusqlite/bundled-sqlcipher-vendored-openssl` and `Sql::open` takes a
+  passphrase, applying `PRAGMA key` whenever it is non-empty (`core/src/sql.rs`),
+  with `PRAGMA rekey` for changing it. Delta Chat ships this wired up but passes
+  an empty passphrase, so the store is unencrypted in practice.
+
+  Enabling it is therefore not an engine change; it is a *key management*
+  problem -- deciding between an OS keyring secret and a user passphrase, and
+  handling unlock, change and recovery. That is the actual work, and it is why
+  this stays a later opt-in feature rather than a default.

@@ -99,9 +99,9 @@ eeemail/
     └── compose/          #   docker-compose variant used by CI
 ```
 
-**Fork discipline — this is what determines whether the fork stays maintainable.** Keep `chatmail/core` as a git remote and merge periodically. Concentrate every addition in `core/src/email/` and touch upstream files as narrowly as possible (ideally single call-sites and hook points). Record each upstream-file patch in `docs/fork-patches.md` with its rationale, so a merge conflict can be resolved by someone who wasn't there.
+**Fork discipline — this is what determines whether the fork stays maintainable.** Keep `chatmail/core` as a git remote and merge periodically, forking from tagged releases rather than `main`. Concentrate every addition in `core/src/email/` and touch upstream files as narrowly as possible (ideally single call-sites and hook points). Record each upstream-file patch in [`fork-patches.md`](fork-patches.md) with its rationale, so a merge conflict can be resolved by someone who wasn't there — `scripts/check-fork-patches.sh` fails CI if you don't.
 
-**Do not rip out unwanted features in Phase 0.** Group machinery, `webxdc.rs` and `peer_channels.rs` are woven through `receive_imf/` and `chat/`; aggressive early deletion means fighting the compiler instead of building. Disable them at the API layer first behind cargo features, and delete incrementally once our layer is stable.
+**Do not rip out unwanted features in Phase 0.** Group machinery, `webxdc.rs` and `peer_channels.rs` are woven through `receive_imf/` and `chat/`; aggressive early deletion means fighting the compiler instead of building. Disable them at the API layer first behind cargo features, and delete incrementally once our layer is stable. The measured site-by-site inventory is in [`out-of-scope.md`](out-of-scope.md).
 
 ### Storage additions
 
@@ -153,8 +153,10 @@ We want chatmail's **server configuration**, not its **relay addressing model**.
 
 Each phase ends runnable and testable through `cli/`.
 
-**Phase 0 — Fork and foundation.**
-Vendor `chatmail/core`, add upstream remote and a documented merge policy, relicense the repo to MPL-2.0 (`LICENSE` + `NOTICE` for reused-crate licenses), set up CI (fmt/clippy/test), write `docs/adr/` capturing the decisions in this plan. Gate out-of-scope features behind cargo features. *Gate:* fork builds green with upstream's test suite passing.
+**Phase 0 — Fork and foundation.** *(complete)*
+Vendored `chatmail/core` at **`v2.59.0`** (`e322fdf`) into `core/` via `git subtree`, with upstream as a git remote and a documented merge policy in [`fork-patches.md`](fork-patches.md). Relicensed to MPL-2.0 (`LICENSE` + `NOTICE`). CI at `.github/workflows/ci.yml` runs rustfmt, clippy, MSRV check and the test suite; `scripts/check-fork-patches.sh` mechanically enforces that every patched upstream file is recorded in the ledger. Out-of-scope features declared as cargo features with a measured removal inventory in [`out-of-scope.md`](out-of-scope.md).
+
+*Gate met:* `cargo nextest run --workspace` — **1153 passed, 0 failed** (145s); doctests pass; `cargo fmt --check` clean. Note that `cargo test` fails on this green tree, because upstream's clock mock is a process-global whose shift accumulates — see [`testing.md`](testing.md).
 
 **Phase 0.5 — Server template.**
 `server/`: adapt chatmail relay's Postfix/Dovecot/OpenDKIM/filtermail configuration to traditional account provisioning, drop the relay-specific pieces listed above, and produce a docker-compose variant. This lands early because every later phase's integration tests run against it. *Gate:* `docker compose up` yields a working E2EE-enforcing mail server that a Delta Chat client can also use, and CI can provision accounts against it.

@@ -205,12 +205,33 @@ tracing-subscriber = "0.3"
 yerpc = "0.6.4"
 
 [features]
-default = ["vendored"]
+# eeemail fork: `default` additionally enables every out-of-scope upstream
+# feature, so the fork builds and tests exactly like upstream until each one is
+# actually gated off. See docs/out-of-scope.md for the removal inventory and
+# docs/adr/0001-fork-chatmail-core.md for why we gate before deleting.
+default = ["vendored", "relay-provisioning", "peer-channels", "webxdc"]
 internals = []
 vendored = [
   "rusqlite/bundled-sqlcipher-vendored-openssl",
   "async-native-tls/vendored"
 ]
+
+# --- eeemail: out-of-scope upstream features -------------------------------
+# Each is slated for removal. They are cargo features rather than deletions so
+# that upstream merges keep applying cleanly while we build our layer.
+
+# Chatmail relay account provisioning: relay selection/migration and the
+# `DCACCOUNT:` QR scheme that hands out an account from a scanned code.
+# eeemail uses traditional user@domain accounts (docs/adr/0007-server-template.md).
+relay-provisioning = []
+
+# Iroh peer-to-peer channels: the realtime transport behind webxdc and
+# decentralized groups/channels. Out of scope; we are an email client.
+peer-channels = []
+
+# Webxdc mini-apps. Chat-app feature with no email-client analogue.
+# Depends on peer-channels for its realtime transport.
+webxdc = ["peer-channels"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
