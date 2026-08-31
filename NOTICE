@@ -1,0 +1,39 @@
+eeemail
+Copyright (c) 2026 eeemail contributors
+
+This product is licensed under the Mozilla Public License 2.0. See LICENSE.
+
+--------------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------------
+
+eeemail forks and depends on components from the Delta Chat / chatmail project
+and its ecosystem. Each retains its own license.
+
+  chatmail/core (forked into core/)      MPL-2.0
+    https://github.com/chatmail/core
+    Delta Chat core library: Autocrypt, SecureJoin, PGP/MIME, IMAP/SMTP,
+    ephemeral messages, MDN, multi-device sync, encrypted backup, WebRTC calls.
+
+  chatmail/relay (adapted into server/)  MPL-2.0
+    https://github.com/chatmail/relay
+    Postfix/Dovecot/OpenDKIM/filtermail configuration and deployment tooling.
+
+  deltachat-contact-tools                MPL-2.0
+  format-flowed                          MPL-2.0
+
+  rPGP (pgp)                             MIT OR Apache-2.0
+    https://github.com/rpgp/rpgp
+  async-imap                             MIT OR Apache-2.0
+    https://github.com/chatmail/async-imap
+  async-smtp                             MIT OR Apache-2.0
+
+Protocol specifications implemented:
+
+  SecureJoin      https://securejoin.delta.chat/          (CC)
+  Autocrypt L1.1  https://docs.autocrypt.org/level1.html  (CC0)
+  RFC 8098 (MDN), RFC 9788 (header protection), RFC 3156 (PGP/MIME),
+  RFC 3676 (format=flowed), RFC 9580 (OpenPGP)
+
+The full dependency tree and its licenses can be regenerated with
+`cargo about generate` or `cargo deny list` once the workspace exists.
