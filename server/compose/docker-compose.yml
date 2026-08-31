@@ -1,0 +1,43 @@
+# eeemail test mail server.
+#
+#   docker compose up -d --build      # permissive: models a classic provider
+#   STRICT_E2EE=1 docker compose up -d --build --force-recreate
+#
+# Two profiles matter because eeemail has three encryption modes
+# (docs/adr/0006-encryption-policy.md) and they need different servers to test
+# against:
+#
+#   permissive (default) -- accepts cleartext. Models a normal email provider.
+#                           Exercises opportunistic and lenient modes, and
+#                           cleartext interop with ordinary mail clients.
+#   strict (STRICT_E2EE=1) -- submission-time header minimization, as a
+#                           chatmail relay does. Exercises strict mode.
+#
+# Not a production deployment: self-signed certs, plaintext passwords, no DKIM
+# (needs real DNS -- that belongs in server/deploy/).
+
+services:
+  mail:
+    build:
+      context: .
+    image: eeemail/test-mail:latest
+    container_name: eeemail-mail
+    hostname: ${MAIL_DOMAIN:-eeemail.test}
+    environment:
+      MAIL_DOMAIN: ${MAIL_DOMAIN:-eeemail.test}
+      # "user:password" pairs; addresses become user@MAIL_DOMAIN.
+      ACCOUNTS: ${ACCOUNTS:-alice:alicepw bob:bobpw}
+      STRICT_E2EE: ${STRICT_E2EE:-0}
+    ports:
+      - "${SMTP_PORT:-2525}:25"
+      - "${SUBMISSION_PORT:-2587}:587"
+      - "${SUBMISSIONS_PORT:-2465}:465"
+      - "${IMAP_PORT:-2143}:143"
+      - "${IMAPS_PORT:-2993}:993"
+    healthcheck:
+      # Ready only when Dovecot answers IMAP and Postfix answers submission.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/143 && head -c 4 <&3 | grep -q '\\* OK' && exec 4<>/dev/tcp/127.0.0.1/587"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s

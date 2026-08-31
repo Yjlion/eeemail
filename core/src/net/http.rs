@@ -404,6 +404,7 @@ pub(crate) async fn read_url_blob_with_tls(
 /// Returns response text and whether request was successful or not.
 ///
 /// Does not follow redirects.
+#[cfg(feature = "relay-provisioning")]
 pub(crate) async fn post_empty(context: &Context, url: &str) -> Result<(String, bool)> {
     let parsed_url = url
         .parse::<hyper::Uri>()

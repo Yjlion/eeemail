@@ -18,7 +18,7 @@ Site counts and line numbers are against our fork point, **`v2.59.0`**
 
 ---
 
-## `relay-provisioning` — chatmail relay account provisioning
+## `relay-provisioning` — chatmail relay account provisioning  ✅ **gated off**
 
 Relay selection/migration plus the `DCACCOUNT:` QR scheme that hands out an
 account from a scanned code. eeemail uses traditional `user@domain` accounts
@@ -40,6 +40,17 @@ paths to move on the next merge.
 `core/src/context.rs:1053-1068` also emits three `automatic_relay_management*`
 keys in the info map. These only read `Config` values and are harmless; leave
 them until the module goes.
+
+**Status:** gated off (removed from `default` in `core/Cargo.toml`). Rather than
+gating the `Qr::Account` enum variant and every `match` arm on it, the two
+implementation functions are feature-gated and paired with `#[cfg(not(...))]`
+stubs that `bail!` with a clear message. A `DCACCOUNT:` QR therefore fails
+cleanly instead of silently doing nothing, and no enum definition or match arm
+carries a `cfg` -- far less to conflict on at merge time. Exact patches are in
+[`fork-patches.md`](fork-patches.md).
+
+Still to do: delete `automatic_relay_management.rs` and the `DCACCOUNT:`
+dispatch entirely once our layer is stable.
 
 **Note:** this removes relay *provisioning* only. A chatmail relay remains a
 perfectly good IMAP/SMTP transport and must keep working as one.

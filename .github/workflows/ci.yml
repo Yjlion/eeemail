@@ -37,7 +37,13 @@ jobs:
       - name: rustfmt
         working-directory: core
         run: cargo fmt --all -- --check
-      - name: clippy
+      # Both configurations. --all-features alone would never lint the
+      # default (gated-off) build, which is the one we actually ship, and
+      # dead-code warnings only appear when a feature is OFF.
+      - name: clippy (default features)
+        working-directory: core
+        run: cargo clippy --workspace --all-targets
+      - name: clippy (all features)
         working-directory: core
         run: cargo clippy --workspace --all-targets --all-features
 
@@ -53,6 +59,34 @@ jobs:
           fetch-depth: 0
       - name: Every patched upstream file must be in the ledger
         run: ./scripts/check-fork-patches.sh
+
+  mail-server:
+    name: Test mail server
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          show-progress: false
+          persist-credentials: false
+      - name: Build image
+        run: docker build -t eeemail/test-mail:latest server/compose
+      - name: Permissive profile
+        run: |
+          docker run -d --name mail --hostname eeemail.test \
+            -p 2525:25 -p 2587:587 -p 2465:465 -p 2143:143 -p 2993:993 \
+            eeemail/test-mail:latest
+          timeout 60 bash -c 'until docker logs mail 2>&1 | grep -q "ready"; do sleep 1; done'
+          python3 server/compose/smoke-test.py
+          docker rm -f mail
+      - name: Strict profile
+        run: |
+          docker run -d --name mail --hostname eeemail.test -e STRICT_E2EE=1 \
+            -p 2525:25 -p 2587:587 -p 2465:465 -p 2143:143 -p 2993:993 \
+            eeemail/test-mail:latest
+          timeout 60 bash -c 'until docker logs mail 2>&1 | grep -q "ready"; do sleep 1; done'
+          python3 server/compose/smoke-test.py --strict
+          docker rm -f mail
 
   msrv:
     name: MSRV ${{ github.workflow }}
@@ -93,9 +127,12 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest
-      - name: cargo nextest
+      - name: cargo nextest (default features)
         working-directory: core
         run: cargo nextest run --workspace --locked
+      - name: cargo nextest (all features)
+        working-directory: core
+        run: cargo nextest run --workspace --locked --all-features
       - name: doctests
         working-directory: core
         run: cargo test --workspace --locked --doc

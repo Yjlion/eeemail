@@ -53,6 +53,7 @@ impl Session {
 
         // we try to add additional relays right before going into IDLE mode,
         // because we are connected and don't have anything important to do.
+        #[cfg(feature = "relay-provisioning")]
         tokio::task::spawn(
             crate::automatic_relay_management::maybe_add_additional_relays(context.clone()),
         );

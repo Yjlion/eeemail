@@ -1,0 +1,2 @@
+# Every address must be sent from by its own authenticated user.
+/^(.*)$/	${1}

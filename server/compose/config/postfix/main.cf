@@ -1,0 +1,55 @@
+# eeemail test server -- Postfix
+#
+# Adapted from chatmail/relay's main.cf.j2 (MIT). See
+# docs/adr/0007-server-template.md for what we keep and what we drop.
+#
+# Kept from relay: sender-login enforcement, LMTP handoff to Dovecot, message
+# size caps, submission-time header cleanup (strict profile only).
+# Dropped: filtermail transport wiring (added by the `strict` profile),
+# MTA-STS, OpenDKIM -- both need real DNS and belong in server/deploy/.
+
+compatibility_level = 3.6
+smtpd_banner = $myhostname ESMTP
+biff = no
+append_dot_mydomain = no
+readme_directory = no
+
+myhostname = MAIL_DOMAIN
+myorigin = MAIL_DOMAIN
+mydestination = MAIL_DOMAIN, localhost
+# Loopback ONLY. Do not add the container/bridge subnet here: every client
+# reaching this server does so from the bridge gateway, so trusting RFC1918
+# would turn the whole Docker network into an authenticated relay.
+mynetworks = 127.0.0.0/8 [::1]/128
+
+# Dovecot owns the mailboxes; Postfix hands everything local to it over LMTP.
+local_transport = lmtp:unix:private/dovecot-lmtp
+local_recipient_maps =
+mailbox_size_limit = 0
+message_size_limit = 31457280
+recipient_delimiter = +
+
+inet_interfaces = all
+inet_protocols = ipv4
+
+# A submitting user may only use their own address as the envelope sender.
+# `/^(.*)$/ ${1}` maps every address to itself as the required SASL login.
+smtpd_sender_login_maps = pcre:/etc/postfix/login_map
+mua_client_restrictions = permit_sasl_authenticated, reject
+mua_sender_restrictions = reject_sender_login_mismatch, permit_sasl_authenticated, reject
+mua_helo_restrictions = permit_mynetworks, permit
+
+# Accept inbound mail addressed to our own domains from anyone (so tests can
+# inject mail on :25 as an outside sender), but relay onward only for
+# authenticated submitters. `reject_unauth_destination` is what draws that
+# line -- plain `reject` here would refuse legitimate inbound mail.
+smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
+
+smtpd_tls_cert_file = /etc/dovecot/ssl/cert.pem
+smtpd_tls_key_file = /etc/dovecot/ssl/key.pem
+smtpd_tls_security_level = may
+smtpd_tls_protocols = >=TLSv1.2
+smtp_tls_security_level = may
+smtpd_peername_lookup = no
+
+maillog_file = /dev/stdout

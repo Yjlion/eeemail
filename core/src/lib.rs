@@ -55,6 +55,7 @@ pub use events::*;
 
 mod aheader;
 pub mod appversions;
+#[cfg(feature = "relay-provisioning")]
 mod automatic_relay_management;
 pub mod blob;
 pub mod calls;

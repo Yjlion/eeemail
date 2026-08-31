@@ -60,9 +60,22 @@ can tell them apart.
 |---|---|---|---|
 | `core/Cargo.toml` | Added `relay-provisioning`, `peer-channels`, `webxdc` features; all three included in `default`. | Declares the gates for out-of-scope upstream features. In `default` for now so the fork builds and tests identically to upstream; each is dropped from `default` as it is actually gated. Inventory: [`out-of-scope.md`](out-of-scope.md). | [0001](adr/0001-fork-chatmail-core.md), [0007](adr/0007-server-template.md) |
 
+| `core/src/lib.rs` | `#[cfg(feature = "relay-provisioning")]` on `mod automatic_relay_management;`. | Gates chatmail relay provisioning off. | [0007](adr/0007-server-template.md) |
+| `core/src/qr.rs` | Split the `DCACCOUNT:` implementation into feature-gated real versions of `decode_account` / `login_param_from_account_qr` plus `#[cfg(not(...))]` stubs that `bail!`. Gated the now relay-only imports, `HTTPS_SCHEME`, and the `CreateAccount*Response` structs. | Same. Stubs rather than gating the `Qr::Account` variant, so no enum definition or `match` arm needs a `cfg` -- a much smaller merge surface. | [0007](adr/0007-server-template.md) |
+| `core/src/net/http.rs` | `#[cfg(feature = "relay-provisioning")]` on `post_empty`. | Only caller is the gated `DCACCOUNT:` path; unused otherwise and CI runs `-Dwarnings`. | [0007](adr/0007-server-template.md) |
+| `core/src/imap/idle.rs` | `#[cfg(feature = "relay-provisioning")]` on the `maybe_add_additional_relays` spawn before IDLE. | Same. | [0007](adr/0007-server-template.md) |
+| `core/src/qr/qr_tests.rs` | `#[cfg(feature = "relay-provisioning")]` on `test_decode_account`. | The test asserts `DCACCOUNT:` parses; meaningless once gated off. | [0007](adr/0007-server-template.md) |
+
 Conflict guidance for `core/Cargo.toml`: upstream edits `[features]` rarely, but
 when it does, keep both sides -- our three feature keys are additive and our only
 change to `default` is appending to the existing list.
+
+Conflict guidance for the `relay-provisioning` gates: upstream renamed
+`automatic_relay_management` to `autorelay` after our fork point, so the next
+merge will move `core/src/lib.rs` and `core/src/imap/idle.rs`. The intent is
+simply that **no chatmail relay provisioning code is reachable by default**. If
+upstream restructures the `DCACCOUNT:` path, re-derive the gates from that
+intent rather than trying to replay this diff.
 
 ## New files (not upstream, no merge risk)
 

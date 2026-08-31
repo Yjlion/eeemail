@@ -719,6 +719,9 @@ async fn test_decode_dclogin_advanced_options() -> Result<()> {
     Ok(())
 }
 
+// eeemail: DCACCOUNT is chatmail relay account provisioning, which we gate off
+// by default. See docs/adr/0007-server-template.md.
+#[cfg(feature = "relay-provisioning")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_decode_account() -> Result<()> {
     let ctx = TestContext::new().await;

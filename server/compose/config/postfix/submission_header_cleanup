@@ -1,0 +1,14 @@
+# Submission-time metadata minimization, from chatmail/relay (MIT).
+#
+# ONLY loaded by the `strict` compose profile. Under `strict`, all mail is
+# end-to-end encrypted, the real subject lives in the protected header inside
+# the encrypted part, and the outer Subject is already a placeholder -- so
+# replacing it costs nothing and denies the server a metadata trove.
+#
+# It must NOT be used on a permissive/classic server: eeemail sends cleartext
+# mail there, and rewriting Subject would destroy real user data.
+/^Received:/            IGNORE
+/^X-Originating-IP:/    IGNORE
+/^X-Mailer:/            IGNORE
+/^User-Agent:/          IGNORE
+/^Subject:/             REPLACE Subject: [...]

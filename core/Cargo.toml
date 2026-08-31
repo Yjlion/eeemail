@@ -209,7 +209,7 @@ yerpc = "0.6.4"
 # feature, so the fork builds and tests exactly like upstream until each one is
 # actually gated off. See docs/out-of-scope.md for the removal inventory and
 # docs/adr/0001-fork-chatmail-core.md for why we gate before deleting.
-default = ["vendored", "relay-provisioning", "peer-channels", "webxdc"]
+default = ["vendored", "peer-channels", "webxdc"]
 internals = []
 vendored = [
   "rusqlite/bundled-sqlcipher-vendored-openssl",

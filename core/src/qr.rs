@@ -9,14 +9,19 @@ pub use dclogin_scheme::LoginOptions;
 pub(crate) use dclogin_scheme::login_param_from_login_qr;
 use deltachat_contact_tools::{ContactAddress, addr_normalize, may_be_valid_addr};
 use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, percent_encode};
+#[cfg(feature = "relay-provisioning")]
 use serde::Deserialize;
 
+#[cfg(feature = "relay-provisioning")]
 use crate::automatic_relay_management::login_param_from_host;
 use crate::config::Config;
 use crate::contact::{Contact, ContactId, Origin};
 use crate::context::Context;
 use crate::key::Fingerprint;
-use crate::login_param::{EnteredCertificateChecks, EnteredImapLoginParam, EnteredLoginParam};
+use crate::login_param::EnteredLoginParam;
+#[cfg(feature = "relay-provisioning")]
+use crate::login_param::{EnteredCertificateChecks, EnteredImapLoginParam};
+#[cfg(feature = "relay-provisioning")]
 use crate::net::http::post_empty;
 use crate::net::proxy::{DEFAULT_SOCKS_PORT, ProxyConfig};
 use crate::token;
@@ -32,6 +37,7 @@ const MAILTO_SCHEME: &str = "mailto:";
 const MATMSG_SCHEME: &str = "MATMSG:";
 const VCARD_SCHEME: &str = "BEGIN:VCARD";
 const SMTP_SCHEME: &str = "SMTP:";
+#[cfg(feature = "relay-provisioning")]
 const HTTPS_SCHEME: &str = "https://";
 const SHADOWSOCKS_SCHEME: &str = "ss://";
 
@@ -689,6 +695,15 @@ async fn decode_ideltachat(context: &Context, prefix: &str, qr: &str) -> Result<
 /// scheme: `DCACCOUNT:example.org`
 /// or `DCACCOUNT:https://example.org/new`
 /// or `DCACCOUNT:https://example.org/new_email?t=1w_7wDjgjelxeX884x96v3`
+#[cfg(not(feature = "relay-provisioning"))]
+fn decode_account(_qr: &str) -> Result<Qr> {
+    bail!(
+        "DCACCOUNT: chatmail relay account provisioning is not supported; \
+           configure a traditional user@domain account instead"
+    )
+}
+
+#[cfg(feature = "relay-provisioning")]
 fn decode_account(qr: &str) -> Result<Qr> {
     let payload = qr
         .get(DCACCOUNT_SCHEME.len()..)
@@ -801,6 +816,7 @@ fn decode_backup2(qr: &str) -> Result<Qr> {
     })
 }
 
+#[cfg(feature = "relay-provisioning")]
 #[derive(Debug, Deserialize)]
 struct CreateAccountSuccessResponse {
     /// Email address.
@@ -809,6 +825,7 @@ struct CreateAccountSuccessResponse {
     /// Password.
     password: String,
 }
+#[cfg(feature = "relay-provisioning")]
 #[derive(Debug, Deserialize)]
 struct CreateAccountErrorResponse {
     /// Reason for the failure to create account returned by the server.
@@ -818,6 +835,18 @@ struct CreateAccountErrorResponse {
 /// Takes a QR with `DCACCOUNT:` scheme, parses its parameters,
 /// downloads additional information from the contained URL
 /// and returns the login parameters.
+#[cfg(not(feature = "relay-provisioning"))]
+pub(crate) async fn login_param_from_account_qr(
+    _context: &Context,
+    _qr: &str,
+) -> Result<EnteredLoginParam> {
+    bail!(
+        "DCACCOUNT: chatmail relay account provisioning is not supported; \
+           configure a traditional user@domain account instead"
+    )
+}
+
+#[cfg(feature = "relay-provisioning")]
 pub(crate) async fn login_param_from_account_qr(
     context: &Context,
     qr: &str,

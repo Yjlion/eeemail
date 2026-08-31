@@ -15,9 +15,14 @@ and its ecosystem. Each retains its own license.
     Delta Chat core library: Autocrypt, SecureJoin, PGP/MIME, IMAP/SMTP,
     ephemeral messages, MDN, multi-device sync, encrypted backup, WebRTC calls.
 
-  chatmail/relay (adapted into server/)  MPL-2.0
+  chatmail/relay (adapted into server/)  MIT
     https://github.com/chatmail/relay
-    Postfix/Dovecot/OpenDKIM/filtermail configuration and deployment tooling.
+    Postfix/Dovecot/OpenDKIM configuration and deployment tooling.
+
+  chatmail/filtermail (optional binary)  MIT
+    https://github.com/chatmail/filtermail
+    Rust before-queue filter enforcing that only encrypted mail crosses the
+    perimeter. Used by the `strict` compose profile.
 
   deltachat-contact-tools                MPL-2.0
   format-flowed                          MPL-2.0
