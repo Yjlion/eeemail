@@ -23,3 +23,5 @@ Testing: [`../testing.md`](../testing.md)
 | [0011](0011-receipts-and-ephemeral.md) | Read receipts get a verified-only middle setting; ephemeral ships off | Accepted |
 | [0012](0012-rpc-and-cli.md) | eeemail defaults are applied at setup, not as compile-time defaults | Accepted |
 | [0013](0013-desktop-ui.md) | The desktop shell is a JSON-RPC pipe; message content never runs in the app document | Accepted |
+| [0014](0014-recipient-sets-on-the-wire.md) | A message carries its own recipients; Cc/Bcc use the same key path as members | Accepted |
+| [0015](0015-at-rest-and-backup.md) | Database encryption is reported as partial, because the blobdir holds cleartext mail | Accepted |

@@ -2899,7 +2899,14 @@ pub(crate) async fn create_send_msg_jobs(context: &Context, msg: &mut Message) -
     // eeemail: the `To` header, captured before `mimefactory` is consumed by
     // rendering. Recorded below as the message's recipient set.
     let to_header = mimefactory.to_header();
-    let to_header_addrs: Vec<String> = to_header.iter().map(|(_, addr)| addr.clone()).collect();
+    let cc_header = mimefactory.cc_header();
+    // Both headers: a recipient dropped for want of a key is just as invisible
+    // whether they were addressed directly or copied.
+    let addressed: Vec<String> = to_header
+        .iter()
+        .chain(cc_header.iter())
+        .map(|(_, addr)| addr.clone())
+        .collect();
 
     // Default Webxdc integrations are hidden messages and must not be sent out:
     if (msg.param.get_int(Param::WebxdcIntegration).is_some() && msg.hidden)
@@ -3042,9 +3049,23 @@ WHERE id=?
         .ok();
     {
         use crate::email::recipients::{Recipient, RecipientKind};
+        // Record what actually went out. Bcc is carried over from what the
+        // composer stored, because it appears in no header and so cannot be
+        // recovered from the rendered message -- overwriting it here with only
+        // the visible recipients would erase the fact that anyone was
+        // blind-copied at all.
+        let bcc = crate::email::recipients::load_kind(context, msg.id, RecipientKind::Bcc)
+            .await
+            .unwrap_or_default();
         let sent_to: Vec<Recipient> = to_header
             .into_iter()
             .map(|(name, addr)| Recipient::new(RecipientKind::To, addr, name))
+            .chain(
+                cc_header
+                    .into_iter()
+                    .map(|(name, addr)| Recipient::new(RecipientKind::Cc, addr, name)),
+            )
+            .chain(bcc)
             .collect();
         crate::email::recipients::store(context, msg.id, &sent_to)
             .await
@@ -3061,7 +3082,6 @@ WHERE id=?
         // Core removes recipients whose key is missing from the envelope but
         // leaves them in the `To` header, so the difference is exactly who will
         // never see this message.
-        let addressed: Vec<String> = to_header_addrs;
         crate::email::policy::record_undelivered(context, msg.id, &addressed, &recipients)
             .await
             .context("failed to record undelivered recipients")

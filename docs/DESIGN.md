@@ -229,8 +229,27 @@ Threads come back **flat** — `(msgId, parentMsgId, depth)` in display order �
 
 *Outstanding:* the composer, account setup, contact management with verification badges, and QR display/scan. The composer in particular is blocked on the same thing Phases 2 and 4 deferred — `MimeFactory` emits no `Cc` header and derives addressing from chat membership — so building a To/Cc/Bcc composer before that lands would produce a form whose fields the engine ignores.
 
-**Phase 8 — Later features.**
-STUN-based direct device sync (reusing `calls.rs` ICE infrastructure), WebRTC audio/video calls, encrypted cloud backup (`imex/` with a cloud destination — important precisely because the mail server is not our storage), and optional at-rest database encryption. Delta Chat does not encrypt its local store at rest; we match that initially and treat it as a later opt-in feature.
+**Phase 8 — At-rest protection, backup, calls.** *(engine complete)*
+`core/src/email/vault.rs` + `core/src/email/backup.rs`. See [ADR 0015](adr/0015-at-rest-and-backup.md).
+
+**Database encryption is reported as partial, and that is the finding.** Upstream deprecated it in 2025-11 because "Db encryption does nothing with blobs". For Delta Chat that leaves attachments in the clear; for eeemail it leaves attachments **and the raw MIME of every retained message** — complete original messages — in the blobdir beside an encrypted database. Raw MIME retention is our own addition, so we widened that gap. `vault::protection` therefore reports `blobs_encrypted` (always false), the cleartext byte count, and a summary sentence naming both, so a settings screen cannot claim more than is true.
+
+**Backup requires a passphrase** where core's `imex` accepts an optional one — an unencrypted backup is a copy of the whole mailbox in the clear, and must not be reachable by leaving a field blank. Staleness is reported, not scheduled: an automatic backup needs a destination, and every such place is a decision with consequences the user has to make.
+
+**WebRTC calls and ICE were already exposed** by `deltachat-jsonrpc`; nothing to build.
+
+*Gate met:* 11 tests in `email::vault` and `email::backup`, including a full backup round trip and a wrong-passphrase refusal.
+
+*Not implemented:* cloud upload (needs credentials, a provider API and a per-provider threat model — none buildable honestly without picking one), blobdir encryption, and STUN-based direct device sync.
+
+**Phase 9 — Recipient sets on the wire.** *(complete)*
+`core/src/email/compose.rs`. Closes the gap Phases 2, 4 and 7 each deferred: core derives the `To` header, the envelope *and* the key set from chat membership, and emits no `Cc` at all. A message now carries extra recipients of its own. See [ADR 0014](adr/0014-recipient-sets-on-the-wire.md).
+
+Every Cc/Bcc address resolves to a `ContactId`, which is what makes "do we have a key for them?" *the same question* it is for a chat member — so [ADR 0006](adr/0006-encryption-policy.md)'s policy applies unchanged instead of growing a second path. Bcc reaches the envelope and the key set and **no header**.
+
+*Gate met:* 11 tests in `email::compose::compose_tests`. Full suite 1289/1289.
+
+Three real bugs surfaced and were fixed: extra recipients merged inside the encryption branch dropped every Cc from unencrypted mail; `record_undelivered` only compared the `To` header, so a copied recipient dropped for want of a key was invisible; and the send path rebuilt `msg_recipients` from the `To` header, erasing the composer's Cc and Bcc.
 
 ---
 

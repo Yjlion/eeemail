@@ -274,3 +274,78 @@ pub struct JsonrpcSearchQuery {
     #[serde(default)]
     pub chat_id: Option<u32>,
 }
+
+/// Who a message is addressed to.
+#[derive(Deserialize, TypeDef, schemars::JsonSchema, Default)]
+#[serde(rename = "RecipientSet", rename_all = "camelCase")]
+pub struct JsonrpcRecipientSet {
+    /// `To:` addresses. `Name <addr@example.org>` or a bare address.
+    #[serde(default)]
+    pub to: Vec<String>,
+    /// `Cc:` addresses.
+    #[serde(default)]
+    pub cc: Vec<String>,
+    /// `Bcc:` addresses. Never written to a header.
+    #[serde(default)]
+    pub bcc: Vec<String>,
+}
+
+impl From<JsonrpcRecipientSet> for deltachat::email::compose::RecipientSet {
+    fn from(set: JsonrpcRecipientSet) -> Self {
+        Self {
+            to: set.to,
+            cc: set.cc,
+            bcc: set.bcc,
+        }
+    }
+}
+
+/// What at-rest protection is actually in force.
+#[derive(Serialize, TypeDef, schemars::JsonSchema)]
+#[serde(rename = "AtRestProtection", rename_all = "camelCase")]
+pub struct JsonrpcProtection {
+    /// The SQLite database is encrypted with SQLCipher.
+    pub database_encrypted: bool,
+    /// Always `false`. Nothing encrypts the blobdir.
+    pub blobs_encrypted: bool,
+    /// Bytes of cleartext in the blobdir: attachments and retained raw MIME.
+    pub cleartext_bytes: f64,
+    /// True when the database is encrypted but cleartext files remain beside it.
+    pub partial: bool,
+    /// A sentence a settings screen can show verbatim.
+    pub summary: String,
+}
+
+impl From<deltachat::email::vault::Protection> for JsonrpcProtection {
+    fn from(p: deltachat::email::vault::Protection) -> Self {
+        let summary = p.summary();
+        Self {
+            database_encrypted: p.database_encrypted,
+            blobs_encrypted: p.blobs_encrypted,
+            // f64 rather than u64: JSON numbers are doubles, and a blobdir will
+            // not reach the point where that loses precision.
+            cleartext_bytes: p.cleartext_bytes as f64,
+            partial: p.partial,
+            summary,
+        }
+    }
+}
+
+/// When the last backup was taken.
+#[derive(Serialize, TypeDef, schemars::JsonSchema)]
+#[serde(rename = "BackupStatus", rename_all = "camelCase")]
+pub struct JsonrpcBackupStatus {
+    /// Unix timestamp of the last successful backup, or `null` if never.
+    pub last_backup: Option<i64>,
+    /// True if there has never been one, or the last is over a week old.
+    pub stale: bool,
+}
+
+impl From<deltachat::email::backup::BackupStatus> for JsonrpcBackupStatus {
+    fn from(s: deltachat::email::backup::BackupStatus) -> Self {
+        Self {
+            last_backup: s.last_backup,
+            stale: s.stale,
+        }
+    }
+}

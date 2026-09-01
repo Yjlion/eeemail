@@ -127,6 +127,13 @@ pub struct MimeFactory {
     /// and encrypted message cannot be sent to them.
     to: Vec<(String, String)>,
 
+    /// eeemail: pairs of name and address for the `Cc` header.
+    ///
+    /// Upstream emits no `Cc` at all, because in a chat everyone is a member.
+    /// An email client has to be able to copy someone, so a message may carry
+    /// addressees of its own beyond its chat. See `crate::email::compose`.
+    cc: Vec<(String, String)>,
+
     /// Vector of pairs of past group member names and addresses.
     past_members: Vec<(String, String)>,
 
@@ -522,6 +529,9 @@ impl MimeFactory {
             };
 
         let mut recipients = Vec::new();
+        // eeemail: the `Cc` header. Declared out here because it is filled in
+        // alongside the key set, which is scoped to the encryption block below.
+        let mut cc: Vec<(String, String)> = Vec::new();
         let mut to = Vec::new();
         let mut past_members = Vec::new();
         let mut member_fingerprints = Vec::new();
@@ -789,6 +799,31 @@ impl MimeFactory {
                 ContactId::scaleup_origin(context, &recipient_ids, origin).await?;
             }
 
+            // eeemail: addressees the chat cannot express -- Cc and Bcc
+            // typed into the composer. They join the envelope and the key
+            // set here, before the checks below, so the encryption policy
+            // applies to them exactly as it does to a member rather than
+            // through a second code path. See `crate::email::compose`.
+            let extra =
+                crate::email::compose::extra_recipients(context, msg.id, &recipients).await?;
+            for entry in &extra.cc {
+                cc.push((entry.name.clone(), entry.addr.clone()));
+            }
+            // Bcc contributes to the envelope and the keys but never to
+            // `cc`, and so never to a header. That is what Bcc means.
+            for entry in extra.cc.into_iter().chain(extra.bcc) {
+                recipients.push(entry.addr.clone());
+                match entry.key {
+                    Some(key) => keys.push((entry.addr, key)),
+                    None => {
+                        if is_encrypted {
+                            warn!(context, "Missing key for {}", entry.addr);
+                        }
+                        missing_key_addresses.insert(entry.addr);
+                    }
+                }
+            }
+
             if !is_encrypted {
                 Encryption::No
             } else if should_encrypt_symmetrically(&msg, &chat) {
@@ -863,6 +898,7 @@ impl MimeFactory {
             recipients,
             encryption,
             to,
+            cc,
             past_members,
             member_fingerprints,
             member_timestamps,
@@ -915,6 +951,8 @@ impl MimeFactory {
             recipients,
             encryption,
             to: vec![("".to_string(), contact.get_addr().to_string())],
+            // An MDN is addressed to exactly one person; there is no Cc.
+            cc: vec![],
             past_members: vec![],
             member_fingerprints: vec![],
             member_timestamps: vec![],
@@ -1119,6 +1157,11 @@ impl MimeFactory {
         self.to.clone()
     }
 
+    /// eeemail: the `Cc` header as (name, address) pairs, in header order.
+    pub(crate) fn cc_header(&self) -> Vec<(String, String)> {
+        self.cc.clone()
+    }
+
     async fn render_headers(
         &mut self,
         context: &Context,
@@ -1167,6 +1210,20 @@ impl MimeFactory {
             "To",
             mail_builder::headers::address::Address::new_list(to.clone()).into(),
         ));
+
+        // eeemail: `Cc` for addressees beyond the chat. Absent when empty, so a
+        // message that copies nobody is byte-identical to what upstream emits.
+        if !self.cc.is_empty() {
+            let cc: Vec<Address<'static>> = self
+                .cc
+                .iter()
+                .map(|(name, addr)| new_address_with_name(name, addr.clone()))
+                .collect();
+            headers.push((
+                "Cc",
+                mail_builder::headers::address::Address::new_list(cc).into(),
+            ));
+        }
 
         if !self.past_members.is_empty() {
             let past_members: Vec<Address<'static>> = self

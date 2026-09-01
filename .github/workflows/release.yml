@@ -1,0 +1,159 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Buildable on demand, so a release can be rehearsed without cutting a tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (leave empty to build the current ref)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  # Keep in sync with ci.yml.
+  RUST_VERSION: 1.97.1
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      # One platform failing must not cancel the other: a partial release is
+      # easier to complete than to reconstruct.
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-amd64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - name: windows-amd64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          show-progress: false
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+
+      # eeemail links SQLCipher and OpenSSL through vendored crates, so there
+      # is no system OpenSSL to find on either platform. Only the Linux webview
+      # has to be installed, and only for the desktop shell.
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev libgtk-3-dev librsvg2-dev patchelf
+
+      - name: Install NASM
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+
+      - run: rustup toolchain install $RUST_VERSION --profile minimal --target ${{ matrix.target }}
+        shell: bash
+      - run: rustup override set $RUST_VERSION
+        shell: bash
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: ${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      # `tauri::generate_context!` reads `frontendDist` at compile time, so the
+      # frontend must exist before cargo runs.
+      - name: Build the frontend
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build
+        working-directory: core
+        run: cargo build --release --locked --target ${{ matrix.target }} -p eeemail-cli -p eeemail-desktop -p deltachat-rpc-server
+
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="eeemail-${{ matrix.name }}"
+          mkdir -p "dist/$out"
+          bin="core/target/${{ matrix.target }}/release"
+          suffix=""
+          if [ "${{ runner.os }}" = "Windows" ]; then suffix=".exe"; fi
+          for tool in eeemail-cli eeemail-desktop deltachat-rpc-server; do
+            cp "$bin/$tool$suffix" "dist/$out/"
+          done
+          cp LICENSE NOTICE README.md "dist/$out/"
+          cd dist
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a "$out.zip" "$out"
+          else
+            tar czf "$out.tar.gz" "$out"
+          fi
+
+      # A checksum per archive, so a download can be verified without trusting
+      # the transport it arrived over.
+      - name: Checksum
+        shell: bash
+        working-directory: dist
+        run: |
+          for f in *.tar.gz *.zip; do
+            [ -e "$f" ] || continue
+            if command -v sha256sum >/dev/null; then
+              sha256sum "$f" > "$f.sha256"
+            else
+              shasum -a 256 "$f" > "$f.sha256"
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eeemail-${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    # Only a tag push publishes. A manual run builds and uploads artifacts so
+    # the release can be rehearsed without creating one.
+    if: startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          show-progress: false
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "eeemail ${GITHUB_REF_NAME}" \
+            --notes-file .github/RELEASE_NOTES.md \
+            --prerelease \
+            dist/*

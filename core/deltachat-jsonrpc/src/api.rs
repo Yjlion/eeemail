@@ -52,7 +52,8 @@ use types::calls::JsonrpcCallInfo;
 use types::chat::FullChat;
 use types::contact::{ContactObject, VcardContact};
 use types::email::{
-    JsonrpcEncryptionMode, JsonrpcLabel, JsonrpcMdnPolicy, JsonrpcMessageCrypto, JsonrpcRecipient,
+    JsonrpcBackupStatus, JsonrpcEncryptionMode, JsonrpcLabel, JsonrpcMdnPolicy,
+    JsonrpcMessageCrypto, JsonrpcProtection, JsonrpcRecipient, JsonrpcRecipientSet,
     JsonrpcSearchQuery, JsonrpcServerRetention, JsonrpcThreadItem, flatten_thread,
 };
 use types::events::Event;
@@ -2837,6 +2838,60 @@ impl CommandApi {
     // types are in `api/types/email.rs`. On a merge conflict, re-place the
     // block rather than replaying the diff.
     // ---------------------------------------------------------------------
+
+    /// Records the recipient set of a draft before it is sent.
+    ///
+    /// This is what makes a To/Cc/Bcc composer work: core derives addressing
+    /// from chat membership and emits no `Cc` at all, so a message carries its
+    /// own extra addressees. Every address is resolved to a contact, which is
+    /// what makes key lookup for a Cc identical to key lookup for a chat
+    /// member.
+    ///
+    /// Bcc addresses go into the envelope and the encryption key set, and into
+    /// no header.
+    async fn set_message_recipients(
+        &self,
+        account_id: u32,
+        msg_id: u32,
+        recipients: JsonrpcRecipientSet,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::compose::set_recipients(&ctx, MsgId::new(msg_id), &recipients.into()).await
+    }
+
+    /// Reports what at-rest protection is actually in force.
+    ///
+    /// Read the `summary` field and show it. Encrypting the database leaves
+    /// attachments and the original source of every retained message in
+    /// cleartext in the blobdir, so a settings screen that reports only
+    /// `databaseEncrypted` would be telling the user something untrue.
+    async fn get_at_rest_protection(&self, account_id: u32) -> Result<JsonrpcProtection> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::vault::protection(&ctx).await?.into())
+    }
+
+    /// When the last backup was taken, and whether that is recent enough.
+    async fn get_backup_status(&self, account_id: u32) -> Result<JsonrpcBackupStatus> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::backup::status(&ctx).await?.into())
+    }
+
+    /// Writes an encrypted backup into `dir` and records that it happened.
+    ///
+    /// Prefer this over upstream's `export_backup`, which takes an *optional*
+    /// passphrase and tracks nothing. Here the passphrase is required, because
+    /// the local store is the whole mailbox and an unencrypted backup is a copy
+    /// of it in the clear; and the time is recorded, so `get_backup_status` can
+    /// tell the user when their only durable copy last got one.
+    async fn export_encrypted_backup(
+        &self,
+        account_id: u32,
+        dir: String,
+        passphrase: String,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::backup::export(&ctx, Path::new(&dir), &passphrase).await
+    }
 
     /// Applies eeemail's defaults to a freshly created account.
     ///

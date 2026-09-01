@@ -85,6 +85,7 @@ can tell them apart.
 | `core/Cargo.lock` | Regenerated. | Derived, not hand-written: the consequence of the `Cargo.toml` change above. On conflict, take either side and re-run `cargo check`. | [0012](adr/0012-rpc-and-cli.md) |
 | `core/deltachat-jsonrpc/src/api.rs` | Two imports, a `timer_from_secs` helper at the end of the file, and one contiguous block of ~30 thin methods at the end of `impl CommandApi`. | `yerpc`'s `#[rpc]` attribute can only be applied to one `impl` block, so our methods cannot live in a separate file. Every one is a direct call into `deltachat::email::*` and the types are in `api/types/email.rs`, so on conflict re-place the block rather than replaying the diff. | [0012](adr/0012-rpc-and-cli.md) |
 | `core/deltachat-jsonrpc/src/api/types/mod.rs` | `pub mod email;`. | Registers our types. | [0012](adr/0012-rpc-and-cli.md) |
+| `core/src/mimefactory.rs` | Added a `cc` field to `MimeFactory`, a block merging extra Cc/Bcc recipients into the envelope and key set before the encryption branch, a `Cc` header in `render_headers`, and a `cc_header()` accessor. | Core emits no `Cc` at all and derives addressing from chat membership, so a composer had nothing to write to. Placed **before** the encryption branch on purpose: inside it, every Cc was silently dropped from unencrypted mail. | [0014](adr/0014-recipient-sets-on-the-wire.md) |
 
 Conflict guidance for the raw-MIME hooks: all three are single call sites whose
 *intent* is what matters -- retain originals on receive and send, expire them in
@@ -124,6 +125,9 @@ intent rather than trying to replay this diff.
 | `core/src/email/search.rs` | Search over body, subject, recipients and labels | [0009](adr/0009-labels-and-search.md) |
 | `core/src/email/policy.rs` | Encryption strictness, per-contact overrides, undelivered recipients, server retention | [0006](adr/0006-encryption-policy.md), [0010](adr/0010-server-retention.md) |
 | `core/src/email/receipts.rs` | Read-receipt policy and ephemeral defaults, with per-contact overrides | [0011](adr/0011-receipts-and-ephemeral.md) |
+| `core/src/email/compose.rs` | Per-message recipient sets on the wire: Cc and Bcc | [0014](adr/0014-recipient-sets-on-the-wire.md) |
+| `core/src/email/vault.rs` | At-rest protection reporting | [0015](adr/0015-at-rest-and-backup.md) |
+| `core/src/email/backup.rs` | Encrypted backup with staleness tracking | [0015](adr/0015-at-rest-and-backup.md) |
 | `core/deltachat-jsonrpc/src/api/types/email.rs` | JSON-RPC types for the email layer | [0012](adr/0012-rpc-and-cli.md) |
 | `cli/` | Headless driver for development and integration tests | [0012](adr/0012-rpc-and-cli.md) |
 | `desktop/` | Tauri v2 shell and TypeScript frontend | [0013](adr/0013-desktop-ui.md) |

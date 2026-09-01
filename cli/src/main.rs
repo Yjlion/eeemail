@@ -45,6 +45,11 @@ Organization
   unarchive <msg-id>            move a message back to the inbox
   search <text>                 search body, subject, recipients
 
+Protection
+  protection                    what at-rest encryption actually covers
+  backup status                 when the last backup was taken
+  backup export <dir> <pass>    write an encrypted backup
+
 Policy
   retention get                 raw-MIME and server retention
   retention set raw <days>      0 = off, N days, -1 = forever
@@ -174,6 +179,31 @@ async fn dispatch(ctx: &Context, command: &str, args: &[&str]) -> Result<Value> 
                 "query": text,
                 "msgIds": hits.iter().map(|id| id.to_u32()).collect::<Vec<_>>(),
             }))
+        }
+
+        ("protection", []) => {
+            let p = email::vault::protection(ctx).await?;
+            Ok(json!({
+                "databaseEncrypted": p.database_encrypted,
+                // Always false. Nothing here encrypts the blobdir, which holds
+                // attachments and the original source of every retained
+                // message.
+                "blobsEncrypted": p.blobs_encrypted,
+                "cleartextBytes": p.cleartext_bytes,
+                "partial": p.partial,
+                "summary": p.summary(),
+            }))
+        }
+        ("backup", ["status"]) => {
+            let status = email::backup::status(ctx).await?;
+            Ok(json!({
+                "lastBackup": status.last_backup,
+                "stale": status.stale,
+            }))
+        }
+        ("backup", ["export", dir, passphrase]) => {
+            email::backup::export(ctx, std::path::Path::new(dir), passphrase).await?;
+            Ok(json!({ "exportedTo": dir }))
         }
 
         ("retention", ["get"]) => Ok(json!({
