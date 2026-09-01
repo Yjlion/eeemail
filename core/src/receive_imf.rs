@@ -1041,7 +1041,18 @@ UPDATE msgs SET state=? WHERE
             .context("failed to thread message")
             .log_err(context)
             .ok();
+        crate::email::labels::drain_pending(context, msg_id)
+            .await
+            .context("failed to apply labels synced ahead of this message")
+            .log_err(context)
+            .ok();
     }
+    // The message is stored, so it is safe to let the server forget it.
+    crate::email::policy::apply_server_retention(context, rfc724_mid_orig)
+        .await
+        .context("failed to apply server retention")
+        .log_err(context)
+        .ok();
 
     Ok(Some(received_msg))
 }

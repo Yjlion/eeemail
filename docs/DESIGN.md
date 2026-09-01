@@ -179,11 +179,26 @@ Per-message subject turned out to need **verification, not implementation**: `ms
 
 *Deferred:* sending **to** an arbitrary recipient set — a `Cc` naming someone outside the conversation — needs encryption keys resolved for addresses that may have none, so it lands with Phase 4 rather than here. The wire format also has no `Cc` today: `MimeFactory` derives addressing from chat membership. Interop against Thunderbird and a real-world mailbox import belongs with that work.
 
-**Phase 3 — Organization and search.**
-`email/labels.rs`: labels/tags, archive, system labels; sync across devices over core's sync messages. Extend core's `search_msgs` to cover subject, recipients and labels.
+**Phase 3 — Organization and search.** *(engine complete)*
+`core/src/email/labels.rs` + `core/src/email/search.rs`, migration 166. Labels in `labels`/`msg_labels`, synced between the user's devices by *name* over core's sync channel via one new `SyncData::EmailLabel` variant. Search over body, subject, recipients and labels as a separate entry point, leaving upstream's `search_msgs` untouched. See [ADR 0009](adr/0009-labels-and-search.md).
 
-**Phase 4 — Encryption policy.**
-`email/policy.rs`: strict / opportunistic / lenient, built on `ForceEncryption`, with per-contact overrides. Per-message encryption and signature state surfaced in the model. *Gate:* SecureJoin and Autocrypt still interoperate with a real Delta Chat client in both directions.
+Two decisions worth knowing. **Archive is the presence of a reserved label, not the absence of an Inbox label** — the inverse of ADR 0005's wording, because every hook we install is best-effort, and an absence-based inbox would make a message vanish from both views if its hook failed. **Label changes that arrive before their message are parked, not dropped**, in `pending_msg_labels` and drained by the receive hook; core's own sync handlers drop in that case, which is tolerable for a deletion and not for a label.
+
+*Gate met:* 22 tests in `email::labels::labels_tests` and 10 in `email::search::search_tests`, including case-insensitive label identity, system labels refusing rename and delete, out-of-order sync settling on the latest intent, a sync item never echoing one back, label names never appearing in cleartext on the wire, and search finding a message by a subject that upstream's `search_msgs` cannot see.
+
+*Deferred:* Sent/Drafts/Trash are presented as system labels by the UI but must be **derived** from `MessageState` and `chat_id`, which core already owns. Storing them would create a second source of truth.
+
+**Phase 4 — Encryption policy and server retention.** *(engine complete)*
+`core/src/email/policy.rs`, migration 167. Strict/opportunistic/lenient with per-contact overrides in `contact_policy`, composing toward the **strictest**. Enforcement needs no change to the send path: `Param::GuaranteeE2ee` and `Param::ForcePlaintext` already exist. Server retention (delete-after-download / keep N days / never), deferred here from Phase 1. Per-message encryption and signature state via `MessageCrypto`. See [ADR 0006](adr/0006-encryption-policy.md) and [ADR 0010](adr/0010-server-retention.md).
+
+**The silent recipient drop.** When a message goes out encrypted, `mimefactory.rs` drops recipients whose key is missing from the envelope but leaves them in the `To` header — in **strict mode too**, not just opportunistic. In a group chat that is defensible; in email you address three people, one never receives it, and nothing says so. We surface it (`msg_undelivered`, plus a warning) rather than change a behaviour upstream's tests depend on.
+
+**Server retention is never retroactive**, so pointing eeemail at an existing mailbox cannot destroy mail that was already there — the same principle as raw-MIME retention in Phase 1.
+
+*Gate met:* 23 tests in `email::policy::policy_tests`. Full suite 1243/1243.
+
+*Deferred:* interop against a real Delta Chat client needs a second live client and is integration work for Phase 6's CLI. Sending to an arbitrary recipient set (a `Cc` naming someone outside the conversation), carried over from Phase 2, is **still outstanding**: `MimeFactory` emits no `Cc` header at all and derives both addressing and the encryption key set from chat membership. It is a larger change than the whole of Phase 4 and is called out separately rather than half-done.
+
 
 **Phase 5 — Ephemeral and read receipts.**
 Both on by default; global toggle; per-contact overrides; read receipts on for verified address-book contacts.

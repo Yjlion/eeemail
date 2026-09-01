@@ -2865,6 +2865,15 @@ pub(crate) async fn create_send_msg_jobs(context: &Context, msg: &mut Message) -
             .await?;
     }
 
+    // eeemail: apply the effective encryption mode before core reads
+    // `GuaranteeE2ee`/`ForcePlaintext` below. Not best-effort like our other
+    // hooks: this decides whether the message is encrypted, so a failure here
+    // must stop the send rather than quietly downgrade it.
+    let email_contacts = get_chat_contacts(context, msg.chat_id)
+        .await
+        .unwrap_or_default();
+    crate::email::policy::prepare_send(context, msg, &email_contacts).await?;
+
     let needs_encryption = msg.param.get_bool(Param::GuaranteeE2ee).unwrap_or_default()
         || (!msg
             .param
@@ -2885,6 +2894,7 @@ pub(crate) async fn create_send_msg_jobs(context: &Context, msg: &mut Message) -
     // eeemail: the `To` header, captured before `mimefactory` is consumed by
     // rendering. Recorded below as the message's recipient set.
     let to_header = mimefactory.to_header();
+    let to_header_addrs: Vec<String> = to_header.iter().map(|(_, addr)| addr.clone()).collect();
 
     // Default Webxdc integrations are hidden messages and must not be sent out:
     if (msg.param.get_int(Param::WebxdcIntegration).is_some() && msg.hidden)
@@ -3042,6 +3052,17 @@ WHERE id=?
         .context("failed to thread outgoing message")
         .log_err(context)
         .ok();
+    {
+        // Core removes recipients whose key is missing from the envelope but
+        // leaves them in the `To` header, so the difference is exactly who will
+        // never see this message.
+        let addressed: Vec<String> = to_header_addrs;
+        crate::email::policy::record_undelivered(context, msg.id, &addressed, &recipients)
+            .await
+            .context("failed to record undelivered recipients")
+            .log_err(context)
+            .ok();
+    }
 
     let trans_fn = |t: &mut rusqlite::Transaction| {
         let mut row_ids = Vec::<i64>::new();

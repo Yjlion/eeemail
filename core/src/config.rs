@@ -407,6 +407,36 @@ pub enum Config {
     #[strum(props(default = "30"))]
     RawMimeRetentionDays,
 
+    /// eeemail: how strictly to encrypt, as one of
+    /// [`crate::email::policy::EncryptionMode`].
+    ///
+    /// 0 = strict (end-to-end only), 1 = opportunistic, 2 = lenient.
+    ///
+    /// Opportunistic by default, which is what original Delta Chat did and
+    /// what lets a new user exchange mail with correspondents who have no keys
+    /// yet. `ForceEncryption` remains authoritative for strict-vs-not so the
+    /// two cannot disagree; this key only distinguishes the two non-strict
+    /// modes.
+    ///
+    /// See docs/adr/0006-encryption-policy.md.
+    #[strum(props(default = "1"))]
+    EncryptionMode,
+
+    /// eeemail: how long a message is left on the server after it has been
+    /// downloaded.
+    ///
+    /// 0 = delete as soon as it is safely stored locally. Positive = keep that
+    /// many days. Negative (canonically -1) = never delete, the coexistence
+    /// mode for people who also read the same account with another client.
+    ///
+    /// The policy applies to messages as they arrive and is never retroactive,
+    /// so pointing eeemail at an existing mailbox cannot destroy mail that was
+    /// already there.
+    ///
+    /// See docs/adr/0010-server-retention.md.
+    #[strum(props(default = "0"))]
+    ServerRetentionDays,
+
     /// Enable sending and executing (applying) sync messages. Sending requires `BccSelf` to be set
     /// and `Bot` unset.
     ///

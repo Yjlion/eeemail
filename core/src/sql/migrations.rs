@@ -2670,6 +2670,76 @@ UPDATE msgs SET state=24 WHERE state=18; -- Change OutPreparing to OutFailed.
         .await?;
     }
 
+    // eeemail: labels/tags and archive. docs/adr/0009-labels-and-search.md
+    inc_and_check(&mut migration_version, 166)?;
+    if dbversion < migration_version {
+        sql.execute_migration(
+            "CREATE TABLE labels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL, -- as the user typed it
+                name_norm TEXT NOT NULL UNIQUE, -- lowercased, so names are unique case-insensitively
+                color INTEGER, -- 0xRRGGBB, NULL if the user picked none
+                system INTEGER NOT NULL DEFAULT 0, -- 1 = ours, cannot be renamed or deleted
+                created INTEGER NOT NULL DEFAULT 0
+            ) STRICT;
+
+            CREATE TABLE msg_labels (
+                msg_id INTEGER NOT NULL, -- msgs.id
+                label_id INTEGER NOT NULL, -- labels.id
+                PRIMARY KEY (msg_id, label_id)
+            ) STRICT;
+            CREATE INDEX msg_labels_index1 ON msg_labels (label_id);
+
+            -- Label changes synced from another device arrive independently of
+            -- the messages they refer to, and routinely before them. Holding
+            -- them here rather than dropping them is what stops a label the
+            -- user applied on their phone silently vanishing on their laptop.
+            CREATE TABLE pending_msg_labels (
+                rfc724_mid TEXT NOT NULL, -- the message, which we may not have yet
+                label_id INTEGER NOT NULL, -- labels.id
+                apply INTEGER NOT NULL, -- 1 = apply on arrival, 0 = remove
+                timestamp INTEGER NOT NULL, -- of the sync item, so the latest intent wins
+                PRIMARY KEY (rfc724_mid, label_id)
+            ) STRICT;
+
+            INSERT INTO labels (name, name_norm, system, created)
+                VALUES (\'Archive\', \'archive\', 1, 0);",
+            migration_version,
+        )
+        .await?;
+    }
+
+    // eeemail: encryption policy and server retention.
+    // docs/adr/0006-encryption-policy.md, docs/adr/0010-server-retention.md
+    inc_and_check(&mut migration_version, 167)?;
+    if dbversion < migration_version {
+        sql.execute_migration(
+            "CREATE TABLE contact_policy (
+                contact_id INTEGER PRIMARY KEY NOT NULL, -- contacts.id
+                encryption_mode INTEGER -- NULL = follow the global setting
+            ) STRICT;
+
+            -- Messages awaiting deletion from the server under a `keep N days`
+            -- retention policy. Keyed by Message-ID because that is what the
+            -- `imap` table is keyed by.
+            CREATE TABLE server_retention (
+                rfc724_mid TEXT PRIMARY KEY NOT NULL,
+                delete_at INTEGER NOT NULL
+            ) STRICT;
+            CREATE INDEX server_retention_index1 ON server_retention (delete_at);
+
+            -- Recipients a message was addressed to but not actually sent to,
+            -- because their key was missing and the message went out encrypted.
+            CREATE TABLE msg_undelivered (
+                msg_id INTEGER NOT NULL, -- msgs.id
+                addr TEXT NOT NULL,
+                PRIMARY KEY (msg_id, addr)
+            ) STRICT;",
+            migration_version,
+        )
+        .await?;
+    }
+
     let new_version = sql
         .get_raw_config_int(VERSION_CFG)
         .await?

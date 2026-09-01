@@ -100,6 +100,11 @@ pub(crate) enum SyncData {
         msgs: Vec<String>, // RFC724 id (i.e. "Message-Id" header)
     },
 
+    /// eeemail: a label change to replay here. One variant covering every
+    /// label operation keeps the merge surface to a single arm; the shape
+    /// lives in `crate::email::labels`.
+    EmailLabel(crate::email::labels::LabelSyncItem),
+
     /// Update transport configuration.
     ///
     /// This message contains a list of all added transports
@@ -328,6 +333,9 @@ impl Context {
                         transports,
                         removed_transports,
                     } => sync_transports(self, transports, removed_transports).await,
+                    SyncData::EmailLabel(item) => {
+                        crate::email::labels::execute_sync_item(self, item, timestamp).await
+                    }
                 },
                 SyncDataOrUnknown::Unknown(data) => {
                     warn!(self, "Ignored unknown sync item: {data}.");

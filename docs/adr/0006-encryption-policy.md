@@ -31,6 +31,43 @@ encryption and reply encrypted where they can.
 Per-contact overrides sit on top of the global mode, in
 `contact_policy(contact_id, ..., encryption_mode)`.
 
+## Resolved in Phase 4
+
+- **`ForceEncryption` stays authoritative for strict-vs-not.** It is core's own
+  setting, it is device-synced, and another client may change it, so making our
+  key authoritative would let the two disagree about the security-relevant bit.
+  `Config::EncryptionMode` therefore only distinguishes opportunistic from
+  lenient; if it says strict while `ForceEncryption` is off, we report
+  opportunistic rather than claim a strictness nothing is enforcing.
+- **Per-contact overrides compose toward the strictest.** A message addressed to
+  several people takes the minimum over the global mode and every override. One
+  correspondent marked strict must not be sent cleartext because someone else on
+  the message is lenient.
+- **Enforcement needs no change to the send path.** Both levers already exist:
+  `Param::GuaranteeE2ee` makes `needs_encryption` true for one message, so a
+  per-contact strict override binds; `Param::ForcePlaintext` suppresses
+  encryption for one message, which is how lenient avoids the silent recipient
+  drop below.
+
+### The silent recipient drop
+
+When a message goes out encrypted, `mimefactory.rs` removes recipients whose key
+is missing from the *envelope* but leaves them in the `To` header:
+
+```rust
+recipients.retain(|addr| !missing_key_addresses.contains(addr));
+```
+
+This applies in **strict mode too**, not only opportunistic. In a group chat it
+is defensible — membership is the chat's own state. In email it means you
+address a message to three people, one never receives it, and nothing says so.
+
+We did not change it: it is woven through group handling and upstream's tests
+depend on it. Instead the send hook compares the `To` header against the
+envelope, records the difference in `msg_undelivered`, and warns, so a client
+can say "Dave did not receive this". Changing the send path itself remains
+open, and should be decided deliberately rather than as a side effect.
+
 ## Implementation note (found in Phase 1)
 
 Upstream core declares `ForceEncryption` with `#[strum(props(default = "1"))]`

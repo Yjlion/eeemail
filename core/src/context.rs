@@ -1051,6 +1051,20 @@ impl Context {
                 .await?
                 .to_string(),
         );
+        // eeemail: the two settings that decide what leaves the device and what
+        // is left behind on the server.
+        res.insert(
+            "encryption_mode",
+            self.get_config_int(Config::EncryptionMode)
+                .await?
+                .to_string(),
+        );
+        res.insert(
+            "server_retention_days",
+            self.get_config_int(Config::ServerRetentionDays)
+                .await?
+                .to_string(),
+        );
         res.insert(
             "force_encryption",
             self.get_config_bool(Config::ForceEncryption)

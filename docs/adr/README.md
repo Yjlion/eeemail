@@ -18,3 +18,5 @@ Testing: [`../testing.md`](../testing.md)
 | [0006](0006-encryption-policy.md) | Opportunistic encryption by default, with strict and lenient modes | Accepted |
 | [0007](0007-server-template.md) | Ship a chatmail-derived Postfix/Dovecot template with traditional accounts | Accepted |
 | [0008](0008-email-message-model.md) | Recipient sets and threading are per-message; threading never merges by subject | Accepted |
+| [0009](0009-labels-and-search.md) | Archive is the presence of a label; extended search is a separate entry point | Accepted |
+| [0010](0010-server-retention.md) | Server retention is applied on arrival and is never retroactive | Accepted |

@@ -818,6 +818,21 @@ pub async fn housekeeping(context: &Context) -> Result<()> {
     if let Err(err) = crate::email::threading::prune(context).await {
         warn!(context, "Housekeeping: cannot prune threads: {:#}.", err);
     }
+    if let Err(err) = crate::email::labels::prune(context).await {
+        warn!(context, "Housekeeping: cannot prune labels: {:#}.", err);
+    }
+    if let Err(err) = crate::email::policy::expire_on_server(context).await {
+        warn!(
+            context,
+            "Housekeeping: cannot expire messages on the server: {:#}.", err
+        );
+    }
+    if let Err(err) = crate::email::policy::prune(context).await {
+        warn!(
+            context,
+            "Housekeeping: cannot prune policy state: {:#}.", err
+        );
+    }
 
     if let Err(err) = remove_unused_files(context).await {
         warn!(
