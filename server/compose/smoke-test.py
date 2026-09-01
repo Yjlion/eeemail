@@ -118,7 +118,12 @@ def main():
                 found[em.get("Subject", "")] = em
             if len(found) >= 2:
                 msgs.update(found)
-                msgs["_caps"] = m.capabilities
+                # Ask again *after* authenticating. `m.capabilities` is the
+                # pre-auth set, and METADATA and QUOTA are per-user features
+                # that Dovecot only advertises once it knows who is asking.
+                typ, data = m.capability()
+                caps = b" ".join(data).decode("ascii", "replace").upper().split()
+                msgs["_caps"] = tuple(caps) if typ == "OK" else m.capabilities
                 m.logout()
                 return f"{len(found)} messages in INBOX"
             m.logout(); time.sleep(1)
