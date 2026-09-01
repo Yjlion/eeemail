@@ -209,8 +209,14 @@ Two decisions worth knowing. **Archive is the presence of a reserved label, not 
 
 *Gate met:* 21 tests in `email::receipts::receipts_tests`. Full suite 1264/1264.
 
-**Phase 6 — RPC and CLI.**
-Extend `deltachat-jsonrpc` with the email methods (subject/recipients on send, threads, labels, raw source, policy). Harden `cli/` as the integration-test driver.
+**Phase 6 — RPC and CLI.** *(complete)*
+~30 methods added to `deltachat-jsonrpc` covering raw source, recipients, threads, labels, search, encryption policy, server retention and read receipts, with types in `deltachat-jsonrpc/src/api/types/email.rs`; TypeScript bindings generate. `cli/` is a headless driver: one command per invocation, JSON on stdout, non-zero exit on error. See [ADR 0012](adr/0012-rpc-and-cli.md).
+
+**eeemail's defaults are applied at setup, not as compile-time defaults.** Flipping `ForceEncryption`'s default to reach ADR 0006's opportunistic default fails 22 upstream tests that assert upstream's policy — 22 permanent merge conflict points for a value that only has to be written once. `email::policy::apply_defaults` does it instead, never touching a configured account (`ForceEncryption` is device-synced, so writing it would push a weaker policy to the user's other clients) and never overwriting an explicit choice. Upstream test churn: **zero**.
+
+Threads come back **flat** — `(msgId, parentMsgId, depth)` in display order — because `typescript_type_def` cannot express a recursive type, and a flat list is what a reading pane renders anyway.
+
+*Gate met:* full suite 1267/1267; TypeScript bindings generate; the CLI exercised end-to-end against a real account.
 
 **Phase 7 — Desktop UI.**
 Tauri v2 over the RPC surface. Message list, threaded reading pane, composer (subject, To/CC/BCC, attachments, quoting), label sidebar, search, settings, account setup, contacts with verification badges, QR display and camera scan. HTML mail rendered sandboxed with remote content blocked by default.

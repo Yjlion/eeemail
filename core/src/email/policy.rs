@@ -175,6 +175,41 @@ impl EncryptionMode {
     }
 }
 
+/// Applies eeemail's defaults to a freshly created account.
+///
+/// Only the ones that differ from upstream's, and only for an account that has
+/// not been configured yet. Two rules make this safe:
+///
+/// * **Never touch a configured account.** An existing Delta Chat profile
+///   opened with eeemail keeps its settings. `ForceEncryption` is device-synced,
+///   so writing it here would propagate a weaker policy to the user's other
+///   clients -- a silent security downgrade we have no business making.
+/// * **Never overwrite an explicit choice.** Only values the user has never set
+///   are filled in.
+///
+/// This runs at setup rather than as a compile-time default because changing
+/// `ForceEncryption`'s default in `config.rs` breaks 22 upstream tests that
+/// assert upstream's policy. Carrying those patches forever is a poor trade for
+/// a value that can be written once. The consequence is that a bare `Context`
+/// opened by something other than eeemail keeps upstream's strict default;
+/// every eeemail entry point calls this.
+pub async fn apply_defaults(context: &Context) -> Result<()> {
+    if context.is_configured().await? {
+        return Ok(());
+    }
+    if context
+        .get_config_bool_opt(Config::ForceEncryption)
+        .await?
+        .is_none()
+    {
+        // Opportunistic: an email client has correspondents who have never
+        // heard of OpenPGP, and refusing to talk to them is the difference
+        // between an email client and a closed messenger.
+        EncryptionMode::set(context, EncryptionMode::Opportunistic).await?;
+    }
+    Ok(())
+}
+
 /// Applies the effective encryption mode to a message about to be sent.
 ///
 /// Deliberately does as little as possible. When the effective mode equals the

@@ -20,6 +20,7 @@ use deltachat::config::{Config, get_all_ui_config_keys};
 use deltachat::constants::DC_MSG_ID_DAYMARKER;
 use deltachat::contact::{Contact, ContactId, Origin, may_be_valid_addr};
 use deltachat::context::get_info;
+use deltachat::email;
 use deltachat::ephemeral::Timer;
 use deltachat::imex;
 use deltachat::location;
@@ -50,6 +51,10 @@ use types::account::Account;
 use types::calls::JsonrpcCallInfo;
 use types::chat::FullChat;
 use types::contact::{ContactObject, VcardContact};
+use types::email::{
+    JsonrpcEncryptionMode, JsonrpcLabel, JsonrpcMdnPolicy, JsonrpcMessageCrypto, JsonrpcRecipient,
+    JsonrpcSearchQuery, JsonrpcServerRetention, JsonrpcThreadItem, flatten_thread,
+};
 use types::events::Event;
 use types::http::HttpResponse;
 use types::message::{MessageData, MessageObject, MessageReadReceipt};
@@ -2822,6 +2827,405 @@ impl CommandApi {
                 .map(JsonrpcAppSource::from_core_type),
         )
     }
+
+    // ---------------------------------------------------------------------
+    // eeemail: the email layer.
+    //
+    // These live inside upstream's `impl CommandApi` because `yerpc`'s `#[rpc]`
+    // attribute can only be applied to one `impl` block. They are deliberately
+    // thin: every one is a direct call into `deltachat::email::*`, and the
+    // types are in `api/types/email.rs`. On a merge conflict, re-place the
+    // block rather than replaying the diff.
+    // ---------------------------------------------------------------------
+
+    /// Applies eeemail's defaults to a freshly created account.
+    ///
+    /// Call once after creating an account, before configuring a transport.
+    /// A no-op for an account that is already configured, so it is safe to
+    /// call on every open and safe on an imported Delta Chat profile.
+    async fn apply_eeemail_defaults(&self, account_id: u32) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::policy::apply_defaults(&ctx).await
+    }
+
+    /// Returns the original MIME bytes of a message, as UTF-8 with invalid
+    /// sequences replaced, or `null` once retention has elapsed.
+    ///
+    /// This is "view source". It is lossy on purpose: the exact bytes are on
+    /// disk, but a JSON string has to be valid UTF-8, and mail is not.
+    async fn get_message_raw_mime(&self, account_id: u32, msg_id: u32) -> Result<Option<String>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::rawmime::load(&ctx, MsgId::new(msg_id))
+            .await?
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
+    /// Whether the original bytes of a message are still retained.
+    ///
+    /// Cheaper than fetching them, and what a UI needs to decide whether to
+    /// offer "view source" at all.
+    async fn is_message_raw_mime_retained(&self, account_id: u32, msg_id: u32) -> Result<bool> {
+        let ctx = self.get_context(account_id).await?;
+        email::rawmime::is_retained(&ctx, MsgId::new(msg_id)).await
+    }
+
+    /// The recipient set of a message: `To`, then `Cc`, then `Bcc`, each in
+    /// header order.
+    async fn get_message_recipients(
+        &self,
+        account_id: u32,
+        msg_id: u32,
+    ) -> Result<Vec<JsonrpcRecipient>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::recipients::load(&ctx, MsgId::new(msg_id))
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// The conversation a message belongs to, or `null` if it has not been
+    /// threaded.
+    async fn get_message_thread(&self, account_id: u32, msg_id: u32) -> Result<Option<i64>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::threading::thread_of(&ctx, MsgId::new(msg_id))
+            .await?
+            .map(|t| t.to_i64()))
+    }
+
+    /// The messages of a conversation, oldest first.
+    async fn get_thread_messages(&self, account_id: u32, thread_id: i64) -> Result<Vec<u32>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(
+            email::threading::messages(&ctx, email::threading::ThreadId::new(thread_id))
+                .await?
+                .into_iter()
+                .map(|id| id.to_u32())
+                .collect(),
+        )
+    }
+
+    /// The reply tree of a conversation, roots oldest first.
+    ///
+    /// A conversation can have several roots: if the message that started it
+    /// was never received, each surviving reply is a root rather than being
+    /// hidden under a placeholder.
+    async fn get_thread_tree(
+        &self,
+        account_id: u32,
+        thread_id: i64,
+    ) -> Result<Vec<JsonrpcThreadItem>> {
+        let ctx = self.get_context(account_id).await?;
+        let roots =
+            email::threading::tree(&ctx, email::threading::ThreadId::new(thread_id)).await?;
+        Ok(flatten_thread(roots))
+    }
+
+    /// All labels, system ones first, then alphabetically.
+    async fn get_labels(&self, account_id: u32) -> Result<Vec<JsonrpcLabel>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::labels::list(&ctx)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// Creates a label, or returns the existing one if the name is taken.
+    ///
+    /// `color` is `0xRRGGBB`. Names are unique case-insensitively.
+    async fn create_label(
+        &self,
+        account_id: u32,
+        name: String,
+        color: Option<u32>,
+    ) -> Result<JsonrpcLabel> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::labels::create(&ctx, &name, color).await?.into())
+    }
+
+    /// Renames a label. System labels cannot be renamed.
+    async fn rename_label(&self, account_id: u32, label_id: i64, new_name: String) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::labels::rename(&ctx, email::labels::LabelId::new(label_id), &new_name).await
+    }
+
+    /// Sets or clears a label's colour.
+    async fn set_label_color(
+        &self,
+        account_id: u32,
+        label_id: i64,
+        color: Option<u32>,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::labels::set_color(&ctx, email::labels::LabelId::new(label_id), color).await
+    }
+
+    /// Deletes a label and removes it from every message.
+    ///
+    /// The messages are untouched: deleting a label is organizational, never
+    /// destructive. System labels cannot be deleted.
+    async fn delete_label(&self, account_id: u32, label_id: i64) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::labels::delete(&ctx, email::labels::LabelId::new(label_id)).await
+    }
+
+    /// Applies a label to messages. Already-labelled messages are left alone.
+    async fn apply_label(&self, account_id: u32, msg_ids: Vec<u32>, label_id: i64) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        let msgs: Vec<MsgId> = msg_ids.into_iter().map(MsgId::new).collect();
+        email::labels::apply(&ctx, &msgs, email::labels::LabelId::new(label_id)).await
+    }
+
+    /// Removes a label from messages.
+    async fn unapply_label(&self, account_id: u32, msg_ids: Vec<u32>, label_id: i64) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        let msgs: Vec<MsgId> = msg_ids.into_iter().map(MsgId::new).collect();
+        email::labels::unapply(&ctx, &msgs, email::labels::LabelId::new(label_id)).await
+    }
+
+    /// The labels on a message, system ones first.
+    async fn get_message_labels(&self, account_id: u32, msg_id: u32) -> Result<Vec<JsonrpcLabel>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::labels::of_msg(&ctx, MsgId::new(msg_id))
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// The messages carrying a label, newest first.
+    async fn get_label_messages(&self, account_id: u32, label_id: i64) -> Result<Vec<u32>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(
+            email::labels::msgs_with(&ctx, email::labels::LabelId::new(label_id))
+                .await?
+                .into_iter()
+                .map(|id| id.to_u32())
+                .collect(),
+        )
+    }
+
+    /// Archives messages.
+    ///
+    /// Archive is the presence of a reserved label, so the inbox is what has
+    /// not been archived and needs no rows of its own.
+    async fn archive_messages(&self, account_id: u32, msg_ids: Vec<u32>) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        let msgs: Vec<MsgId> = msg_ids.into_iter().map(MsgId::new).collect();
+        email::labels::archive(&ctx, &msgs).await
+    }
+
+    /// Moves messages back to the inbox.
+    async fn unarchive_messages(&self, account_id: u32, msg_ids: Vec<u32>) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        let msgs: Vec<MsgId> = msg_ids.into_iter().map(MsgId::new).collect();
+        email::labels::unarchive(&ctx, &msgs).await
+    }
+
+    /// Whether a message has been archived.
+    async fn is_message_archived(&self, account_id: u32, msg_id: u32) -> Result<bool> {
+        let ctx = self.get_context(account_id).await?;
+        email::labels::is_archived(&ctx, MsgId::new(msg_id)).await
+    }
+
+    /// Searches body, subject, recipients and labels. Newest first, capped at
+    /// 1000 results like upstream's search.
+    async fn search_email(&self, account_id: u32, query: JsonrpcSearchQuery) -> Result<Vec<u32>> {
+        let ctx = self.get_context(account_id).await?;
+        let query = email::search::SearchQuery {
+            text: query.text.unwrap_or_default(),
+            label: query.label_id.map(email::labels::LabelId::new),
+            archived: query.archived,
+            chat_id: query.chat_id.map(ChatId::new),
+        };
+        Ok(email::search::search(&ctx, &query)
+            .await?
+            .into_iter()
+            .map(|id| id.to_u32())
+            .collect())
+    }
+
+    /// The global encryption strictness.
+    async fn get_encryption_mode(&self, account_id: u32) -> Result<JsonrpcEncryptionMode> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::policy::EncryptionMode::load(&ctx).await?.into())
+    }
+
+    /// Sets the global encryption strictness, keeping core's `force_encryption`
+    /// in step.
+    async fn set_encryption_mode(
+        &self,
+        account_id: u32,
+        mode: JsonrpcEncryptionMode,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::policy::EncryptionMode::set(&ctx, mode.into()).await
+    }
+
+    /// A contact's encryption override, or `null` to follow the global setting.
+    async fn get_contact_encryption_mode(
+        &self,
+        account_id: u32,
+        contact_id: u32,
+    ) -> Result<Option<JsonrpcEncryptionMode>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(
+            email::policy::EncryptionMode::for_contact(&ctx, ContactId::new(contact_id))
+                .await?
+                .map(Into::into),
+        )
+    }
+
+    /// Sets or clears a contact's encryption override.
+    ///
+    /// Overrides compose toward the strictest: one contact marked strict is not
+    /// sent cleartext because someone else on the message is lenient.
+    async fn set_contact_encryption_mode(
+        &self,
+        account_id: u32,
+        contact_id: u32,
+        mode: Option<JsonrpcEncryptionMode>,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::policy::EncryptionMode::set_for_contact(
+            &ctx,
+            ContactId::new(contact_id),
+            mode.map(Into::into),
+        )
+        .await
+    }
+
+    /// The cryptographic standing of a message, as a client should show it.
+    async fn get_message_crypto(
+        &self,
+        account_id: u32,
+        msg_id: u32,
+    ) -> Result<JsonrpcMessageCrypto> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::policy::message_crypto(&ctx, MsgId::new(msg_id))
+            .await?
+            .into())
+    }
+
+    /// Recipients a message was addressed to but never sent to, because their
+    /// key was missing and the message went out encrypted.
+    ///
+    /// Empty for almost every message. When it is not, the UI should say so:
+    /// nothing else tells the user that someone they addressed never received
+    /// it.
+    async fn get_undelivered_recipients(
+        &self,
+        account_id: u32,
+        msg_id: u32,
+    ) -> Result<Vec<String>> {
+        let ctx = self.get_context(account_id).await?;
+        email::policy::undelivered(&ctx, MsgId::new(msg_id)).await
+    }
+
+    /// How long downloaded messages are left on the server.
+    async fn get_server_retention(&self, account_id: u32) -> Result<JsonrpcServerRetention> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::policy::ServerRetention::load(&ctx).await?.into())
+    }
+
+    /// Sets how long downloaded messages are left on the server.
+    ///
+    /// Applies to messages as they arrive and is never retroactive, so changing
+    /// it cannot destroy mail already on the server.
+    async fn set_server_retention(
+        &self,
+        account_id: u32,
+        retention: JsonrpcServerRetention,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::policy::ServerRetention::set(&ctx, retention.into()).await
+    }
+
+    /// Who gets read receipts.
+    async fn get_mdn_policy(&self, account_id: u32) -> Result<JsonrpcMdnPolicy> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::receipts::MdnPolicy::load(&ctx).await?.into())
+    }
+
+    /// Sets who gets read receipts, keeping core's `mdns_enabled` in step.
+    async fn set_mdn_policy(&self, account_id: u32, policy: JsonrpcMdnPolicy) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::receipts::MdnPolicy::set(&ctx, policy.into()).await
+    }
+
+    /// A contact's read-receipt override, or `null` to follow the policy.
+    async fn get_contact_mdn_enabled(
+        &self,
+        account_id: u32,
+        contact_id: u32,
+    ) -> Result<Option<bool>> {
+        let ctx = self.get_context(account_id).await?;
+        email::receipts::mdn_for_contact(&ctx, ContactId::new(contact_id)).await
+    }
+
+    /// Sets or clears a contact's read-receipt override.
+    ///
+    /// A global off still wins: it is a hard off for everyone.
+    async fn set_contact_mdn_enabled(
+        &self,
+        account_id: u32,
+        contact_id: u32,
+        enabled: Option<bool>,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::receipts::set_mdn_for_contact(&ctx, ContactId::new(contact_id), enabled).await
+    }
+
+    /// The ephemeral timer applied to new conversations, in seconds. `0` is off.
+    async fn get_ephemeral_default(&self, account_id: u32) -> Result<u32> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::receipts::default_timer(&ctx).await?.to_u32())
+    }
+
+    /// Sets the ephemeral timer applied to new conversations.
+    ///
+    /// Ephemeral deletion removes the local copy too, and the local store is
+    /// the only durable copy of the mailbox, so a non-zero value here means
+    /// mail deletes itself. Ships as `0`.
+    async fn set_ephemeral_default(&self, account_id: u32, seconds: u32) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::receipts::set_default_timer(&ctx, timer_from_secs(seconds)).await
+    }
+
+    /// A contact's ephemeral-timer override in seconds, or `null` to follow the
+    /// global default.
+    async fn get_contact_ephemeral_timer(
+        &self,
+        account_id: u32,
+        contact_id: u32,
+    ) -> Result<Option<u32>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(
+            email::receipts::timer_for_contact(&ctx, ContactId::new(contact_id))
+                .await?
+                .map(|t| t.to_u32()),
+        )
+    }
+
+    /// Sets or clears a contact's ephemeral-timer override.
+    ///
+    /// Overrides compose to the shortest, so one set here tightens any
+    /// conversation that includes the contact.
+    async fn set_contact_ephemeral_timer(
+        &self,
+        account_id: u32,
+        contact_id: u32,
+        seconds: Option<u32>,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::receipts::set_timer_for_contact(
+            &ctx,
+            ContactId::new(contact_id),
+            seconds.map(timer_from_secs),
+        )
+        .await
+    }
 }
 
 // Helper functions (to prevent code duplication)
@@ -2851,5 +3255,13 @@ async fn get_config(
     } else {
         ctx.get_config(Config::from_str(key).with_context(|| format!("unknown key {key:?}"))?)
             .await
+    }
+}
+
+/// eeemail: seconds to an ephemeral [`Timer`]. `0` means no timer.
+fn timer_from_secs(seconds: u32) -> Timer {
+    match std::num::NonZero::new(seconds) {
+        Some(duration) => Timer::Enabled { duration },
+        None => Timer::Disabled,
     }
 }

@@ -1,0 +1,18 @@
+[package]
+name = "eeemail-cli"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Headless driver for eeemail, used for development and integration tests."
+publish = false
+# The workspace root is `core/`, which is upwards-invisible from here: cargo
+# only searches parent directories. Naming it explicitly is what lets this
+# crate inherit the workspace dependencies and lints, and share one target dir
+# rather than compiling `deltachat` a second time.
+workspace = "../core"
+
+[dependencies]
+anyhow = { workspace = true }
+deltachat = { path = "../core" }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

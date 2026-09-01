@@ -136,6 +136,10 @@ members = [
   "format-flowed",
   "deltachat-contact-tools",
   "fuzz",
+  # eeemail: our headless driver. Lives outside `core/` so the fork stays the
+  # fork, but is a member of this workspace so it shares the build and the
+  # lockfile rather than compiling `deltachat` a second time.
+  "../cli",
 ]
 
 [[bench]]

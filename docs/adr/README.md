@@ -21,3 +21,4 @@ Testing: [`../testing.md`](../testing.md)
 | [0009](0009-labels-and-search.md) | Archive is the presence of a label; extended search is a separate entry point | Accepted |
 | [0010](0010-server-retention.md) | Server retention is applied on arrival and is never retroactive | Accepted |
 | [0011](0011-receipts-and-ephemeral.md) | Read receipts get a verified-only middle setting; ephemeral ships off | Accepted |
+| [0012](0012-rpc-and-cli.md) | eeemail defaults are applied at setup, not as compile-time defaults | Accepted |

@@ -546,6 +546,12 @@ pub enum Config {
     ///
     /// When enabled, unencrypted messages cannot be sent
     /// and incoming unencrypted messages are not fetched and not processed.
+    ///
+    /// eeemail keeps upstream's default here and turns it off for *new*
+    /// accounts in `email::policy::apply_defaults` instead. Changing the
+    /// compile-time default broke 22 upstream tests that assert this policy,
+    /// which would be permanent merge friction for a value we can set once at
+    /// setup. See docs/adr/0006-encryption-policy.md.
     #[strum(props(default = "1"))]
     ForceEncryption,
 }

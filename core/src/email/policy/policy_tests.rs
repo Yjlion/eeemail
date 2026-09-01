@@ -524,3 +524,57 @@ async fn test_policy_appears_in_get_info() -> Result<()> {
     let _: ChatId = ChatId::new(0);
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_apply_defaults_makes_a_new_account_opportunistic() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let ctx = crate::context::ContextBuilder::new(dir.path().join("db"))
+        .open()
+        .await?;
+
+    // Upstream ships strict, which is right for a chatmail relay and wrong as
+    // an email client's default.
+    assert_eq!(EncryptionMode::load(&ctx).await?, EncryptionMode::Strict);
+
+    apply_defaults(&ctx).await?;
+    assert_eq!(
+        EncryptionMode::load(&ctx).await?,
+        EncryptionMode::Opportunistic
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_apply_defaults_leaves_a_configured_account_alone() -> Result<()> {
+    // An existing Delta Chat profile opened with eeemail. `ForceEncryption` is
+    // device-synced, so writing it here would push a weaker policy to the
+    // user's other clients.
+    let t = TestContext::new_alice().await;
+    assert!(t.is_configured().await?);
+    assert_eq!(EncryptionMode::load(&t).await?, EncryptionMode::Strict);
+
+    apply_defaults(&t).await?;
+    assert_eq!(
+        EncryptionMode::load(&t).await?,
+        EncryptionMode::Strict,
+        "a configured account must keep whatever policy it already had"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_apply_defaults_never_overwrites_an_explicit_choice() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let ctx = crate::context::ContextBuilder::new(dir.path().join("db"))
+        .open()
+        .await?;
+    EncryptionMode::set(&ctx, EncryptionMode::Strict).await?;
+
+    apply_defaults(&ctx).await?;
+    assert_eq!(
+        EncryptionMode::load(&ctx).await?,
+        EncryptionMode::Strict,
+        "a user who asked for strict must not be quietly moved to opportunistic"
+    );
+    Ok(())
+}
