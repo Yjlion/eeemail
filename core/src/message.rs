@@ -1868,7 +1868,9 @@ pub async fn markseen_msgs(context: &Context, msg_ids: Vec<MsgId>) -> Result<()>
                 && !curr_hidden
                 && wants_mdn
                 && curr_param.get_cmd() == SystemMessage::Unknown
-                && context.should_send_mdns().await?
+                // eeemail: read receipts are a disclosure, so who gets one
+                // depends on the correspondent. See `email::receipts`.
+                && crate::email::receipts::should_send_mdn(context, curr_from_id).await?
             {
                 // Clear WantsMdn to not handle a MDN twice
                 // if the state later is InFresh again as markfresh_chat() was called.

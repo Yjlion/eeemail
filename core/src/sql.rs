@@ -833,6 +833,12 @@ pub async fn housekeeping(context: &Context) -> Result<()> {
             "Housekeeping: cannot prune policy state: {:#}.", err
         );
     }
+    if let Err(err) = crate::email::receipts::prune(context).await {
+        warn!(
+            context,
+            "Housekeeping: cannot prune contact policy: {:#}.", err
+        );
+    }
 
     if let Err(err) = remove_unused_files(context).await {
         warn!(

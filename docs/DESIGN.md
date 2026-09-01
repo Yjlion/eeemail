@@ -200,8 +200,14 @@ Two decisions worth knowing. **Archive is the presence of a reserved label, not 
 *Deferred:* interop against a real Delta Chat client needs a second live client and is integration work for Phase 6's CLI. Sending to an arbitrary recipient set (a `Cc` naming someone outside the conversation), carried over from Phase 2, is **still outstanding**: `MimeFactory` emits no `Cc` header at all and derives both addressing and the encryption key set from chat membership. It is a larger change than the whole of Phase 4 and is called out separately rather than half-done.
 
 
-**Phase 5 — Ephemeral and read receipts.**
-Both on by default; global toggle; per-contact overrides; read receipts on for verified address-book contacts.
+**Phase 5 — Ephemeral and read receipts.** *(engine complete)*
+`core/src/email/receipts.rs`, migration 168. A three-state read-receipt policy — never / verified-and-known contacts only / always — with per-contact overrides, plus a default ephemeral timer with per-contact overrides applied on the first message to a conversation. See [ADR 0011](adr/0011-receipts-and-ephemeral.md).
+
+**Read receipts are on by default already**; what was missing was *who*. The verified-only setting is what makes "if a contact is verified and in the address book, they get read receipts" expressible as a policy. A global off is a **hard off**, beating the policy and every override — the reverse would be a privacy regression.
+
+**Ephemeral machinery is complete but ships disabled**, which is a deliberate departure from "on by default" that should be reviewed. Ephemeral deletion removes the local copy, and the local store is the only durable copy of the mailbox ([ADR 0004](adr/0004-local-store-and-raw-mime.md)), so a non-zero default silently destroys mail. No duration was specified. Turning it on is one config value and every test covers the on case.
+
+*Gate met:* 21 tests in `email::receipts::receipts_tests`. Full suite 1264/1264.
 
 **Phase 6 — RPC and CLI.**
 Extend `deltachat-jsonrpc` with the email methods (subject/recipients on send, threads, labels, raw source, policy). Harden `cli/` as the integration-test driver.

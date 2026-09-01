@@ -2873,6 +2873,11 @@ pub(crate) async fn create_send_msg_jobs(context: &Context, msg: &mut Message) -
         .await
         .unwrap_or_default();
     crate::email::policy::prepare_send(context, msg, &email_contacts).await?;
+    crate::email::receipts::apply_default_timer(context, msg.chat_id, msg.id, &email_contacts)
+        .await
+        .context("failed to apply the default ephemeral timer")
+        .log_err(context)
+        .ok();
 
     let needs_encryption = msg.param.get_bool(Param::GuaranteeE2ee).unwrap_or_default()
         || (!msg

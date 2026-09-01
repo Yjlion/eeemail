@@ -2740,6 +2740,18 @@ UPDATE msgs SET state=24 WHERE state=18; -- Change OutPreparing to OutFailed.
         .await?;
     }
 
+    // eeemail: per-contact read-receipt and ephemeral overrides.
+    // docs/adr/0011-receipts-and-ephemeral.md
+    inc_and_check(&mut migration_version, 168)?;
+    if dbversion < migration_version {
+        sql.execute_migration(
+            "ALTER TABLE contact_policy ADD COLUMN mdn_enabled INTEGER;
+             ALTER TABLE contact_policy ADD COLUMN ephemeral_secs INTEGER;",
+            migration_version,
+        )
+        .await?;
+    }
+
     let new_version = sql
         .get_raw_config_int(VERSION_CFG)
         .await?

@@ -437,6 +437,32 @@ pub enum Config {
     #[strum(props(default = "0"))]
     ServerRetentionDays,
 
+    /// eeemail: who gets read receipts, as one of
+    /// [`crate::email::receipts::MdnPolicy`].
+    ///
+    /// 0 = never, 1 = verified contacts in the address book only, 2 = always.
+    ///
+    /// `MdnsEnabled` remains authoritative for on-vs-off, so a user who turns
+    /// read receipts off gets a hard off; this key only chooses between the two
+    /// on-states.
+    ///
+    /// See docs/adr/0011-receipts-and-ephemeral.md.
+    #[strum(props(default = "2"))]
+    MdnPolicy,
+
+    /// eeemail: ephemeral timer applied to a conversation when the first
+    /// message is sent to it, in seconds. 0 disables it.
+    ///
+    /// **Shipped as 0.** Ephemeral deletion removes the message locally too,
+    /// and the local store is the only durable copy of the mailbox
+    /// (docs/adr/0004-local-store-and-raw-mime.md), so a non-zero default
+    /// silently destroys mail. The machinery is complete and honours whatever
+    /// this is set to.
+    ///
+    /// See docs/adr/0011-receipts-and-ephemeral.md.
+    #[strum(props(default = "0"))]
+    EphemeralDefaultSeconds,
+
     /// Enable sending and executing (applying) sync messages. Sending requires `BccSelf` to be set
     /// and `Bot` unset.
     ///

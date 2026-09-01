@@ -8,6 +8,7 @@
 pub mod labels;
 pub mod policy;
 pub mod rawmime;
+pub mod receipts;
 pub mod recipients;
 pub mod search;
 pub mod threading;

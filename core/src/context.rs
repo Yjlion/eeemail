@@ -1066,6 +1066,16 @@ impl Context {
                 .to_string(),
         );
         res.insert(
+            "mdn_policy",
+            self.get_config_int(Config::MdnPolicy).await?.to_string(),
+        );
+        res.insert(
+            "ephemeral_default_seconds",
+            self.get_config_int(Config::EphemeralDefaultSeconds)
+                .await?
+                .to_string(),
+        );
+        res.insert(
             "force_encryption",
             self.get_config_bool(Config::ForceEncryption)
                 .await?
