@@ -6,3 +6,5 @@
 //! `docs/adr/0001-fork-chatmail-core.md` and `docs/fork-patches.md`.
 
 pub mod rawmime;
+pub mod recipients;
+pub mod threading;

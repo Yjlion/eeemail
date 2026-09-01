@@ -2628,6 +2628,48 @@ UPDATE msgs SET state=24 WHERE state=18; -- Change OutPreparing to OutFailed.
         .await?;
     }
 
+    // eeemail: the email message model -- per-message recipient sets and
+    // JWZ threading. docs/adr/0008-email-message-model.md
+    inc_and_check(&mut migration_version, 165)?;
+    if dbversion < migration_version {
+        sql.execute_migration(
+            "CREATE TABLE msg_recipients (
+                msg_id INTEGER NOT NULL, -- msgs.id
+                kind INTEGER NOT NULL, -- 0=To, 1=Cc, 2=Bcc
+                addr TEXT NOT NULL, -- normalized, lowercased
+                name TEXT NOT NULL DEFAULT '', -- display name as sent, may be empty
+                ord INTEGER NOT NULL, -- position within its header, for reply-all fidelity
+                PRIMARY KEY (msg_id, kind, addr)
+            ) STRICT;
+            CREATE INDEX msg_recipients_index1 ON msg_recipients (addr);
+
+            CREATE TABLE threads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject_norm TEXT NOT NULL DEFAULT '', -- subject with Re:/Fwd: prefixes removed
+                last_activity INTEGER NOT NULL DEFAULT 0 -- sort timestamp of the newest member
+            ) STRICT;
+
+            CREATE TABLE msg_threads (
+                msg_id INTEGER PRIMARY KEY NOT NULL, -- msgs.id
+                thread_id INTEGER NOT NULL -- threads.id
+            ) STRICT;
+            CREATE INDEX msg_threads_index1 ON msg_threads (thread_id);
+
+            -- Every Message-ID a thread is known by: the own IDs of its
+            -- members and every ID they reference, including messages we do
+            -- not have.
+            -- This is what lets a late-arriving message join the thread its
+            -- children already formed.
+            CREATE TABLE thread_refs (
+                rfc724_mid TEXT PRIMARY KEY NOT NULL,
+                thread_id INTEGER NOT NULL -- threads.id
+            ) STRICT;
+            CREATE INDEX thread_refs_index1 ON thread_refs (thread_id);",
+            migration_version,
+        )
+        .await?;
+    }
+
     let new_version = sql
         .get_raw_config_int(VERSION_CFG)
         .await?

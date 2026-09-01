@@ -1110,6 +1110,15 @@ impl MimeFactory {
         self.recipients.clone()
     }
 
+    /// eeemail: the `To` header as (name, address) pairs, in header order.
+    ///
+    /// Not the same as [`Self::recipients`], which is the envelope. We record
+    /// what the message says it was addressed to, because that is what a reply
+    /// has to reproduce.
+    pub(crate) fn to_header(&self) -> Vec<(String, String)> {
+        self.to.clone()
+    }
+
     async fn render_headers(
         &mut self,
         context: &Context,

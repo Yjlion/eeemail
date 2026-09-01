@@ -164,12 +164,20 @@ Vendored `chatmail/core` at **`v2.59.0`** (`e322fdf`) into `core/` via `git subt
 **Phase 1 — Raw MIME retention.** *(engine complete)*
 `core/src/email/rawmime.rs`: retention over core's existing content-addressed `BlobObject::create_and_deduplicate_from_bytes`, config key `raw_mime_retention_days` (0 = off, N days, negative = forever; default 30), migration 164, expiry wired into core's housekeeping *before* reference collection so freed blobs are reclaimed in the same pass. Hooked into `receive_imf_inner`'s success exit and `create_send_msg_jobs`.
 
+Housekeeping also drops raw MIME whose message no longer exists, added in Phase 2: without it a deleted message kept its original bytes until expiry, which under `forever` meant permanently.
+
 *Gate met:* 15 tests in `email::rawmime::rawmime_tests`, including byte-identical round-trip, expiry on schedule, `forever` never expiring, housekeeping keeping retained blobs and reclaiming expired ones, and dedup of identical messages. Full suite 1158/1158.
 
 *Deferred:* the CLI (`show --raw`, `retention set`) moves to Phase 6, where `cli/` is actually built; adding a crate here would duplicate that work. Server retention policy (delete-after-download / keep N days / never) is still outstanding and moves to Phase 4, next to the encryption-policy work it shares a settings surface with.
 
-**Phase 2 — Email message model.**
-`email/recipients.rs` + `email/threading.rs`. Per-message subject on receive and send; To/CC/BCC recipient sets; JWZ threading. Compose API takes a subject and a recipient set rather than a chat. *Gate:* send a subject-bearing, CC'd message that threads correctly in Thunderbird, and thread an imported real-world mailbox correctly.
+**Phase 2 — Email message model.** *(engine complete)*
+`core/src/email/recipients.rs` + `core/src/email/threading.rs`, migration 165. Per-message To/Cc/Bcc sets in `msg_recipients`, taken from `MimeMessage::merge_headers` so protected headers win over the outer ones; Bcc written only by the send path. Reference-chain threading in `threads`/`msg_threads`/`thread_refs`, with grouping persisted and tree shape derived on demand. Both hooked into the same two sites as Phase 1. See [ADR 0008](adr/0008-email-message-model.md).
+
+Per-message subject turned out to need **verification, not implementation**: `msgs.subject` already exists, is populated on receive, and `Message::set_subject` already reaches the wire. Tests pin all three so a merge cannot quietly remove them.
+
+*Gate met:* 11 tests in `email::recipients::recipients_tests` and 19 in `email::threading::threading_tests`, including To/Cc kept apart in header order, protected recipients used for encrypted mail, an incoming `Bcc` header ignored, out-of-order arrival, fragment merging, reference cycles, and a 50 000-deep tree that must build and drop without overflowing the stack. Full suite 1188/1188.
+
+*Deferred:* sending **to** an arbitrary recipient set — a `Cc` naming someone outside the conversation — needs encryption keys resolved for addresses that may have none, so it lands with Phase 4 rather than here. The wire format also has no `Cc` today: `MimeFactory` derives addressing from chat membership. Interop against Thunderbird and a real-world mailbox import belongs with that work.
 
 **Phase 3 — Organization and search.**
 `email/labels.rs`: labels/tags, archive, system labels; sync across devices over core's sync messages. Extend core's `search_msgs` to cover subject, recipients and labels.

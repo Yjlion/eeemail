@@ -809,6 +809,15 @@ pub async fn housekeeping(context: &Context) -> Result<()> {
     if let Err(err) = crate::email::rawmime::expire(context).await {
         warn!(context, "Housekeeping: cannot expire raw MIME: {:#}.", err);
     }
+    if let Err(err) = crate::email::recipients::prune(context).await {
+        warn!(
+            context,
+            "Housekeeping: cannot prune message recipients: {:#}.", err
+        );
+    }
+    if let Err(err) = crate::email::threading::prune(context).await {
+        warn!(context, "Housekeeping: cannot prune threads: {:#}.", err);
+    }
 
     if let Err(err) = remove_unused_files(context).await {
         warn!(

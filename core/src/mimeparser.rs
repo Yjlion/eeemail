@@ -71,6 +71,13 @@ pub(crate) struct MimeMessage {
     /// Addresses are normalized and lowercase.
     pub recipients: Vec<SingleInfo>,
 
+    /// eeemail: the same addresses, but with `To` and `Cc` kept apart.
+    ///
+    /// `recipients` above concatenates them, which is all upstream needs for
+    /// group membership. An email client has to reproduce each header
+    /// faithfully. See `crate::email::recipients`.
+    pub(crate) header_recipients: crate::email::recipients::HeaderRecipients,
+
     /// List of addresses from the `Chat-Group-Past-Members` header.
     pub past_members: Vec<SingleInfo>,
 
@@ -287,6 +294,7 @@ impl MimeMessage {
         let mut headers = Default::default();
         let mut headers_removed = HashSet::<String>::new();
         let mut recipients = Default::default();
+        let mut header_recipients = Default::default();
         let mut past_members = Default::default();
         let mut from = Default::default();
         let mut list_post = Default::default();
@@ -298,6 +306,7 @@ impl MimeMessage {
             &mut headers,
             &mut headers_removed,
             &mut recipients,
+            &mut header_recipients,
             &mut past_members,
             &mut from,
             &mut list_post,
@@ -542,6 +551,7 @@ impl MimeMessage {
                 &mut headers,
                 &mut headers_removed,
                 &mut recipients,
+                &mut header_recipients,
                 &mut past_members,
                 &mut inner_from,
                 &mut list_post,
@@ -646,6 +656,7 @@ impl MimeMessage {
             headers_removed,
 
             recipients,
+            header_recipients,
             past_members,
             list_post,
             from,
@@ -1764,6 +1775,7 @@ impl MimeMessage {
         headers: &mut HashMap<String, String>,
         headers_removed: &mut HashSet<String>,
         recipients: &mut Vec<SingleInfo>,
+        header_recipients: &mut crate::email::recipients::HeaderRecipients,
         past_members: &mut Vec<SingleInfo>,
         from: &mut Option<SingleInfo>,
         list_post: &mut Option<String>,
@@ -1802,6 +1814,7 @@ impl MimeMessage {
         if has_header_protection || !recipients_new.is_empty() {
             *recipients = recipients_new;
         }
+        header_recipients.merge(fields, has_header_protection);
         let past_members_addresses =
             get_all_addresses_from_header(fields, "chat-group-past-members");
         if has_header_protection || !past_members_addresses.is_empty() {
@@ -2463,7 +2476,10 @@ pub(crate) fn get_list_post(headers: &[MailHeader]) -> Option<String> {
 /// unless the header is "oversigned",
 /// i.e. included in the signature more times
 /// than it appears in the mail.
-fn get_all_addresses_from_header(headers: &[MailHeader], header: &str) -> Vec<SingleInfo> {
+pub(crate) fn get_all_addresses_from_header(
+    headers: &[MailHeader],
+    header: &str,
+) -> Vec<SingleInfo> {
     let mut result: Vec<SingleInfo> = Default::default();
 
     if let Some(header) = headers

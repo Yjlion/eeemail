@@ -69,10 +69,13 @@ can tell them apart.
 | `core/src/sql/migrations.rs` | Migration 164: `CREATE TABLE raw_mime`. | Raw MIME retention storage. | [0004](adr/0004-local-store-and-raw-mime.md) |
 | `core/src/config.rs` | Added `Config::RawMimeRetentionDays` (default `30`). | Retention period: 0 = off, negative = forever. | [0004](adr/0004-local-store-and-raw-mime.md) |
 | `core/src/lib.rs` | `pub mod email;`. | Registers our layer. | [0001](adr/0001-fork-chatmail-core.md) |
-| `core/src/receive_imf.rs` | One best-effort `email::rawmime::store` call at the single success exit of `receive_imf_inner`. | Retains incoming originals. Deliberately not on the `trash()` path: an ignored message has no content worth keeping. | [0004](adr/0004-local-store-and-raw-mime.md) |
-| `core/src/chat.rs` | One best-effort `email::rawmime::store` call in `create_send_msg_jobs`, before the SMTP-queue transaction. | Retains outgoing originals so a sent message can be viewed as source like a received one. | [0004](adr/0004-local-store-and-raw-mime.md) |
+| `core/src/receive_imf.rs` | One best-effort block at the single success exit of `receive_imf_inner`, calling `email::rawmime::store`, `email::recipients::store` and `email::threading::assign_stored`. | Retains incoming originals, records the recipient set, places the message in a conversation. Deliberately not on the `trash()` path: an ignored message has no content worth keeping. | [0004](adr/0004-local-store-and-raw-mime.md), [0008](adr/0008-email-message-model.md) |
+| `core/src/chat.rs` | One best-effort block in `create_send_msg_jobs` before the SMTP-queue transaction, mirroring the receive hook, plus a `mimefactory.to_header()` capture beside the existing `mimefactory.recipients()` call. | Gives sent messages the same raw MIME, recipient set and thread as received ones. The capture is needed because `mimefactory` is consumed by rendering. | [0004](adr/0004-local-store-and-raw-mime.md), [0008](adr/0008-email-message-model.md) |
 | `core/src/context.rs` | Added `raw_mime_retention_days` to the `get_info` map. | Upstream's `test_get_info_completeness` requires every `Config` key to appear in `get_info` or be explicitly skipped. Included rather than skipped because it is exactly what you check when "view source" is unavailable on an older message. | [0004](adr/0004-local-store-and-raw-mime.md) |
-| `core/src/sql.rs` | `email::rawmime::expire` call in `housekeeping`, plus a `SELECT blobname FROM raw_mime` block in `remove_unused_files`. | Expiry must run **before** reference collection so freed blobs are reclaimed in the same pass; the SELECT stops housekeeping deleting blobs that are still retained. Mirrors the existing `http_cache` block exactly. | [0004](adr/0004-local-store-and-raw-mime.md) |
+| `core/src/sql.rs` | `email::rawmime::expire`, `email::recipients::prune` and `email::threading::prune` calls in `housekeeping`, plus a `SELECT blobname FROM raw_mime` block in `remove_unused_files`. | Expiry must run **before** reference collection so freed blobs are reclaimed in the same pass; the SELECT stops housekeeping deleting blobs that are still retained. Mirrors the existing `http_cache` and `msgs_mdns` blocks. | [0004](adr/0004-local-store-and-raw-mime.md), [0008](adr/0008-email-message-model.md) |
+| `core/src/sql/migrations.rs` | Migration 165: `CREATE TABLE msg_recipients`, `threads`, `msg_threads`, `thread_refs`. | Per-message recipient sets and thread grouping. | [0008](adr/0008-email-message-model.md) |
+| `core/src/mimeparser.rs` | Added a `header_recipients` field to `MimeMessage`, one extra `&mut` parameter to `merge_headers` and one line setting it, and widened `get_all_addresses_from_header` to `pub(crate)`. | `To` and `Cc` must be kept apart; upstream's `recipients` concatenates them. Taken from `merge_headers` because that is where RFC 9788 protected headers have already been resolved -- the outer headers of an encrypted message may be absent or misleading. | [0008](adr/0008-email-message-model.md) |
+| `core/src/mimefactory.rs` | Added a `to_header()` accessor beside the existing `recipients()`. | Records what a sent message was addressed to. Additive; no behaviour change. | [0008](adr/0008-email-message-model.md) |
 
 Conflict guidance for the raw-MIME hooks: all three are single call sites whose
 *intent* is what matters -- retain originals on receive and send, expire them in
@@ -81,6 +84,14 @@ housekeeping. If upstream restructures `receive_imf_inner`'s exits or
 ordering constraint in `sql.rs` (expire before `remove_unused_files`) is load
 bearing and covered by
 `email::rawmime::rawmime_tests::test_housekeeping_keeps_retained_blob_but_reclaims_expired`.
+
+Conflict guidance for the email-model hooks: `merge_headers` is the one patch
+here that upstream is likely to touch, because it gains parameters as upstream
+adds protected headers. The intent is narrow -- whenever upstream replaces
+`recipients`, replace our `to`/`cc` pair on the same condition. If the signature
+becomes unwieldy upstream may collapse it into a struct; fold
+`header_recipients` into that struct rather than fighting it. The rest of the
+hooks are single call sites; re-place them by intent as with the raw-MIME ones.
 
 Conflict guidance for `core/Cargo.toml`: upstream edits `[features]` rarely, but
 when it does, keep both sides -- our three feature keys are additive and our only
@@ -98,7 +109,7 @@ intent rather than trying to replay this diff.
 | File | Purpose | ADR |
 |---|---|---|
 | `core/src/email/rawmime.rs` | Raw MIME blob store + retention/expiry | [0004](adr/0004-local-store-and-raw-mime.md) |
-| `core/src/email/recipients.rs` | To/CC/BCC sets decoupled from chat membership | [0001](adr/0001-fork-chatmail-core.md) |
-| `core/src/email/threading.rs` | JWZ threading over References/In-Reply-To | [0001](adr/0001-fork-chatmail-core.md) |
+| `core/src/email/recipients.rs` | To/CC/BCC sets decoupled from chat membership | [0008](adr/0008-email-message-model.md) |
+| `core/src/email/threading.rs` | JWZ threading over References/In-Reply-To | [0008](adr/0008-email-message-model.md) |
 | `core/src/email/labels.rs` | Labels/tags + archive | [0005](adr/0005-labels-not-folders.md) |
 | `core/src/email/policy.rs` | Encryption strictness, retention, MDN/ephemeral defaults | [0006](adr/0006-encryption-policy.md) |

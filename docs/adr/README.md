@@ -17,3 +17,4 @@ Testing: [`../testing.md`](../testing.md)
 | [0005](0005-labels-not-folders.md) | Organize with labels/tags + archive, not a folder tree | Accepted |
 | [0006](0006-encryption-policy.md) | Opportunistic encryption by default, with strict and lenient modes | Accepted |
 | [0007](0007-server-template.md) | Ship a chatmail-derived Postfix/Dovecot template with traditional accounts | Accepted |
+| [0008](0008-email-message-model.md) | Recipient sets and threading are per-message; threading never merges by subject | Accepted |

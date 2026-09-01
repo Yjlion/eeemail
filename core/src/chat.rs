@@ -2882,6 +2882,9 @@ pub(crate) async fn create_send_msg_jobs(context: &Context, msg: &mut Message) -
         }
     };
     let mut recipients = mimefactory.recipients();
+    // eeemail: the `To` header, captured before `mimefactory` is consumed by
+    // rendering. Recorded below as the message's recipient set.
+    let to_header = mimefactory.to_header();
 
     // Default Webxdc integrations are hidden messages and must not be sent out:
     if (msg.param.get_int(Param::WebxdcIntegration).is_some() && msg.hidden)
@@ -3015,10 +3018,28 @@ WHERE id=?
         .await?;
 
     // eeemail: retain the bytes we are about to put on the wire, so a sent
-    // message can be viewed as source and re-verified like a received one.
+    // message can be viewed as source and re-verified like a received one, and
+    // record the recipient set and conversation the same way reception does.
     crate::email::rawmime::store(context, msg.id, rendered_msg.message.as_bytes())
         .await
         .context("failed to retain outgoing raw MIME")
+        .log_err(context)
+        .ok();
+    {
+        use crate::email::recipients::{Recipient, RecipientKind};
+        let sent_to: Vec<Recipient> = to_header
+            .into_iter()
+            .map(|(name, addr)| Recipient::new(RecipientKind::To, addr, name))
+            .collect();
+        crate::email::recipients::store(context, msg.id, &sent_to)
+            .await
+            .context("failed to record outgoing recipients")
+            .log_err(context)
+            .ok();
+    }
+    crate::email::threading::assign_stored(context, msg.id)
+        .await
+        .context("failed to thread outgoing message")
         .log_err(context)
         .ok();
 

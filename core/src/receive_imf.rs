@@ -1020,12 +1020,25 @@ UPDATE msgs SET state=? WHERE
         }
     }
 
-    // eeemail: retain the original bytes. Best-effort -- raw MIME is an
-    // enhancement, and failing to keep it must never fail reception.
+    // eeemail: retain the original bytes, record the recipient set, and place
+    // the message in a conversation. All best-effort -- these enrich a message
+    // that has already been received successfully, and failing to derive them
+    // must never fail reception.
+    let email_recipients = mime_parser.header_recipients.to_recipients();
     for &msg_id in &received_msg.msg_ids {
         crate::email::rawmime::store(context, msg_id, imf_raw)
             .await
             .context("failed to retain raw MIME")
+            .log_err(context)
+            .ok();
+        crate::email::recipients::store(context, msg_id, &email_recipients)
+            .await
+            .context("failed to record recipients")
+            .log_err(context)
+            .ok();
+        crate::email::threading::assign_stored(context, msg_id)
+            .await
+            .context("failed to thread message")
             .log_err(context)
             .ok();
     }

@@ -176,14 +176,21 @@ pub async fn is_retained(context: &Context, msg_id: MsgId) -> Result<bool> {
         .await
 }
 
-/// Drops rows whose retention has elapsed. Returns how many were dropped.
+/// Drops rows whose retention has elapsed, and rows belonging to messages that
+/// no longer exist. Returns how many were dropped.
 ///
 /// Only the table rows go here. The blobs themselves are reclaimed by
 /// `sql::remove_unused_files`, which runs later in the same housekeeping pass
 /// and collects anything no longer referenced.
+///
+/// The orphan sweep is what stops retention outliving its message: a row whose
+/// message was deleted still references its blob, so without this a deleted
+/// message keeps its original bytes on disk until expiry -- forever, under
+/// [`Retention::Forever`]. Trashed messages keep a tombstone row in `msgs` to
+/// suppress re-download, but their content is gone, so they count as deleted.
 pub async fn expire(context: &Context) -> Result<usize> {
     let now = time();
-    let count = context
+    let expired = context
         .sql
         .execute(
             "DELETE FROM raw_mime WHERE expires_at IS NOT NULL AND expires_at <= ?",
@@ -191,8 +198,21 @@ pub async fn expire(context: &Context) -> Result<usize> {
         )
         .await
         .context("failed to expire raw MIME")?;
+    let orphaned = context
+        .sql
+        .execute(
+            "DELETE FROM raw_mime WHERE msg_id NOT IN \
+             (SELECT id FROM msgs WHERE chat_id!=?)",
+            (crate::constants::DC_CHAT_ID_TRASH,),
+        )
+        .await
+        .context("failed to drop orphaned raw MIME")?;
+    let count = expired.saturating_add(orphaned);
     if count > 0 {
-        info!(context, "Expired raw MIME for {count} message(s).");
+        info!(
+            context,
+            "Expired raw MIME for {expired} message(s), dropped {orphaned} orphaned."
+        );
     }
     Ok(count)
 }
