@@ -29,11 +29,24 @@ jobs:
         with:
           show-progress: false
           persist-credentials: false
+      # The workspace now includes the Tauri shell, so linting it needs the
+      # Linux webview headers. Without these the build fails in `webkit2gtk`'s
+      # build script, which is a confusing place to discover a missing package.
+      - name: Install desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev libgtk-3-dev librsvg2-dev patchelf
       - run: rustup toolchain install $RUST_VERSION --profile minimal --component rustfmt --component clippy
       - run: rustup override set $RUST_VERSION
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
+      - name: Build the frontend
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run build
       - name: rustfmt
         working-directory: core
         run: cargo fmt --all -- --check
@@ -46,6 +59,44 @@ jobs:
       - name: clippy (all features)
         working-directory: core
         run: cargo clippy --workspace --all-targets --all-features
+
+  frontend:
+    name: Desktop frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          show-progress: false
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install
+        working-directory: desktop
+        run: npm ci
+      - name: Typecheck
+        working-directory: desktop
+        run: npm run check
+      - name: Build
+        working-directory: desktop
+        run: npm run build
+      # The reading pane renders mail from strangers. These two properties are
+      # what stand between a message and the network, and between message
+      # markup and the app document; a refactor must not quietly drop either.
+      # See docs/adr/0013-desktop-ui.md.
+      - name: Untrusted content stays contained
+        working-directory: desktop
+        run: |
+          grep -q "Content-Security-Policy" dist/index.html
+          grep -q "default-src 'self'" dist/index.html
+          grep -q "sandbox" dist/assets/*.js
+          if grep -q "allow-scripts\|allow-same-origin" dist/assets/*.js; then
+            echo "message HTML must never be granted scripts or a real origin" >&2
+            exit 1
+          fi
 
   fork-discipline:
     name: Fork discipline
@@ -97,11 +148,26 @@ jobs:
         with:
           show-progress: false
           persist-credentials: false
+      - name: Install desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev libgtk-3-dev librsvg2-dev patchelf
       - run: rustup toolchain install $MSRV --profile minimal
       - run: rustup override set $MSRV
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
+      # The Tauri shell needs the built frontend to exist at compile time:
+      # `tauri::generate_context!` reads `frontendDist`.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the frontend
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run build
       - name: cargo check
         working-directory: core
         run: cargo check --workspace --all-targets
@@ -115,6 +181,11 @@ jobs:
         with:
           show-progress: false
           persist-credentials: false
+      - name: Install desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev libgtk-3-dev librsvg2-dev patchelf
       - run: rustup toolchain install $RUST_VERSION --profile minimal
       - run: rustup override set $RUST_VERSION
       - uses: Swatinem/rust-cache@v2

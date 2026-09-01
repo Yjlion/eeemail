@@ -218,8 +218,16 @@ Threads come back **flat** — `(msgId, parentMsgId, depth)` in display order �
 
 *Gate met:* full suite 1267/1267; TypeScript bindings generate; the CLI exercised end-to-end against a real account.
 
-**Phase 7 — Desktop UI.**
-Tauri v2 over the RPC surface. Message list, threaded reading pane, composer (subject, To/CC/BCC, attachments, quoting), label sidebar, search, settings, account setup, contacts with verification badges, QR display and camera scan. HTML mail rendered sandboxed with remote content blocked by default.
+**Phase 7 — Desktop UI.** *(reading client complete; composer and setup outstanding)*
+`desktop/`: a Tauri v2 shell over the RPC surface, plus a TypeScript frontend. Message list, threaded reading pane, label sidebar, search, and per-message encryption/verification/undelivered/source state. See [ADR 0013](adr/0013-desktop-ui.md).
+
+**The shell is one JSON-RPC pipe, not a Tauri command per method.** The RPC surface is a couple of hundred methods and grows every phase; mirroring each would mean writing every signature three times. Requests go in through `rpc_send`, and everything coming back — responses *and* engine events — is emitted as one `rpc-message` stream, the same shape `deltachat-rpc-server` has over stdio.
+
+**Untrusted content has two independent barriers**, and the redundancy is the point: the window CSP allows no remote origins, *and* the renderer strips remote references and reports that it did. A single remote image is a read receipt the sender gets without consent, plus the user's IP. HTML mail renders only inside an iframe with a bare `sandbox` attribute — no scripts, no forms, no navigation, `null` origin — never in the app document. CI asserts all of this against the built bundle.
+
+*Gate met:* frontend typechecks and builds; the Rust shell compiles clean under `-Dwarnings`; the app launches under Xvfb, opens the account store and enters its event loop.
+
+*Outstanding:* the composer, account setup, contact management with verification badges, and QR display/scan. The composer in particular is blocked on the same thing Phases 2 and 4 deferred — `MimeFactory` emits no `Cc` header and derives addressing from chat membership — so building a To/Cc/Bcc composer before that lands would produce a form whose fields the engine ignores.
 
 **Phase 8 — Later features.**
 STUN-based direct device sync (reusing `calls.rs` ICE infrastructure), WebRTC audio/video calls, encrypted cloud backup (`imex/` with a cloud destination — important precisely because the mail server is not our storage), and optional at-rest database encryption. Delta Chat does not encrypt its local store at rest; we match that initially and treat it as a later opt-in feature.

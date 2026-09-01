@@ -1,0 +1,25 @@
+[package]
+name = "eeemail-desktop"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "eeemail desktop client"
+publish = false
+# The workspace root is `core/`; see `cli/Cargo.toml` for why this is spelled
+# out. Sharing the target directory matters more here than anywhere else,
+# because `deltachat` is the slowest thing in the build.
+workspace = "../../core"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = { workspace = true }
+deltachat = { path = "../../core" }
+futures-lite = { workspace = true }
+deltachat-jsonrpc = { path = "../../core/deltachat-jsonrpc" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tauri = { version = "2", features = [] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
+yerpc = { workspace = true }
