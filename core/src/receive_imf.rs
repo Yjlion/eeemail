@@ -1055,6 +1055,14 @@ UPDATE msgs SET state=? WHERE
             .log_err(context)
             .ok();
     }
+    // Learns the sender's advertised key, so that our *next* message to them
+    // can be encrypted. Outside the per-message loop: the key belongs to the
+    // sender, not to any one of the ids this message produced.
+    crate::email::autocrypt::adopt(context, &mime_parser)
+        .await
+        .context("failed to adopt an Autocrypt key")
+        .log_err(context)
+        .ok();
     // The message is stored, so it is safe to let the server forget it.
     crate::email::policy::apply_server_retention(context, rfc724_mid_orig)
         .await

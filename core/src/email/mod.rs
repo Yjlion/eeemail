@@ -5,6 +5,7 @@
 //! files is what makes merging from upstream tractable; see
 //! `docs/adr/0001-fork-chatmail-core.md` and `docs/fork-patches.md`.
 
+pub mod autocrypt;
 pub mod backup;
 pub mod blobcrypt;
 pub mod compose;

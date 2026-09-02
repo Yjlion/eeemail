@@ -55,6 +55,13 @@ const HOLD_SECS: i64 = HOLD_DAYS * 86_400;
 /// Whether a correspondent's mail reaches the inbox.
 ///
 /// Deliberately **either** verified or known, not both: see the module docs.
+///
+/// Trust is decided per *person*, not per contact row. Core keys encryption off
+/// the row, so the same correspondent is routinely two rows -- an
+/// address-contact from the mail you sent them, and a key-contact from the
+/// encrypted reply that came back ([ADR 0021]). Asking only about the row the
+/// message arrived on would hold the first encrypted reply from everyone the
+/// user has ever written to, which is the exact opposite of what this is for.
 pub async fn is_trusted(context: &Context, contact_id: ContactId) -> Result<bool> {
     if contact_id == ContactId::SELF {
         return Ok(true);
@@ -63,7 +70,33 @@ pub async fn is_trusted(context: &Context, contact_id: ContactId) -> Result<bool
         // A contact we cannot load is not one we can vouch for.
         return Ok(false);
     };
-    Ok(contact.origin.is_known() || contact.is_verified(context).await?)
+    if contact.origin.is_known() || contact.is_verified(context).await? {
+        return Ok(true);
+    }
+    // Only the *known* half carries across rows. Verification is a claim about
+    // a key surviving an active attacker, and an address is not a key -- so it
+    // stays where it was earned, and nothing here makes anyone verified.
+    let addr = contact.get_addr();
+    if addr.is_empty() {
+        return Ok(false);
+    }
+    let same_person: Vec<ContactId> = context
+        .sql
+        .query_map_vec(
+            "SELECT id FROM contacts
+             WHERE addr=?1 COLLATE NOCASE AND id!=?2 AND id>?3 AND blocked=0",
+            (addr, contact_id, ContactId::LAST_SPECIAL),
+            |row| Ok(row.get::<_, ContactId>(0)?),
+        )
+        .await?;
+    for other_id in same_person {
+        if let Ok(other) = Contact::get_by_id(context, other_id).await
+            && other.origin.is_known()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether gating is on, from [`Config::InboxGating`].

@@ -41,7 +41,7 @@ use anyhow::{Result, bail, ensure};
 use deltachat_contact_tools::{ContactAddress, addr_normalize};
 
 use crate::chat::{ChatId, send_msg};
-use crate::contact::{Contact, Origin};
+use crate::contact::{Contact, ContactId, Origin};
 use crate::context::Context;
 use crate::key::{DcKey, SignedPublicKey};
 use crate::message::{Message, MsgId, Viewtype};
@@ -153,10 +153,22 @@ pub async fn send(
     };
 
     let (name, addr) = split_addr(primary.trim());
-    let contact_addr = ContactAddress::new(&addr)?;
-    let contact_id = Contact::add_or_lookup(context, &name, &contact_addr, Origin::OutgoingTo)
-        .await?
-        .0;
+    // Prefer a key-contact when we hold one for this address. A `Single` chat
+    // is encrypted only when its contact row carries a fingerprint
+    // (`Chat::is_encrypted`), and `add_or_lookup` without one returns the
+    // *address*-contact -- so addressing that would send cleartext to someone
+    // whose key we have, including someone the user has verified by QR.
+    // Guarded by `compose_tests::test_a_verified_contact_gets_an_encrypted_chat`
+    // and step 3b of `scripts/e2e-pass.py`.
+    let contact_id = match key_contact_for(context, &addr_normalize(&addr)).await? {
+        Some(contact_id) => contact_id,
+        None => {
+            let contact_addr = ContactAddress::new(&addr)?;
+            Contact::add_or_lookup(context, &name, &contact_addr, Origin::OutgoingTo)
+                .await?
+                .0
+        }
+    };
     let chat_id = ChatId::create_for_contact(context, contact_id).await?;
 
     let mut msg = match attachment {
@@ -243,6 +255,28 @@ pub(crate) async fn extra_recipients(
         }
     }
     Ok(extra)
+}
+
+/// The key-contact we hold for an address, if any.
+///
+/// Core keys encryption off the contact *row*, not off key availability: the
+/// same person can be both an address-contact and a key-contact, and only the
+/// latter produces an encrypted chat. Most recently seen wins, matching how
+/// core resolves the same ambiguity on the receive path.
+async fn key_contact_for(context: &Context, addr: &str) -> Result<Option<ContactId>> {
+    context
+        .sql
+        .query_row_optional(
+            "SELECT id FROM contacts
+             WHERE addr=?1 COLLATE NOCASE
+               AND fingerprint IS NOT NULL AND fingerprint!=''
+               AND id>?2 AND blocked=0
+             ORDER BY last_seen DESC
+             LIMIT 1",
+            (addr, ContactId::LAST_SPECIAL),
+            |row| row.get::<_, ContactId>(0),
+        )
+        .await
 }
 
 /// The public key we hold for an address, if any.

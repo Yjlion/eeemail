@@ -63,7 +63,11 @@ same rule would silently destroy real user data.
 | | |
 |---|---|
 | Domain | `eeemail.test` (`MAIL_DOMAIN`) |
-| Accounts | `alice:alicepw bob:bobpw` (`ACCOUNTS`, `user:password` pairs) |
+| Accounts | `alice:alicepw bob:bobpw carol:carolpw` (`ACCOUNTS`, `user:password` pairs) |
+
+`carol` exists so that `scripts/e2e-pass.py` can send a message with a `Cc:` to a
+third real mailbox and check the header survives the round trip. Two accounts
+cannot tell a dropped `Cc` from a delivered one.
 | Ports | 2525→25, 2587→587, 2465→465, 2143→143, 2993→993 |
 
 ### What the smoke test covers

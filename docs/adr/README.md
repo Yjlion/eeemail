@@ -41,3 +41,12 @@ functionality against. The deployment pieces all need a real domain and real
 DNS, so they cannot be written honestly, let alone verified, from here. The
 decision is to wait until there is a domain to deploy to rather than ship
 configuration nobody has run.
+
+**An Autocrypt header makes a key-contact** (2026-09-02).
+[0021](0021-autocrypt-key-contacts.md) reverses, for eeemail, upstream `v2.59`'s
+removal of Autocrypt-derived keys. The first live pass showed
+[0006](0006-encryption-policy.md)'s opportunistic default was unreachable:
+encryption follows contact type, and only a signed message or SecureJoin creates
+the right kind of contact, so two correspondents who never scan a QR code can
+never bootstrap. The key learned this way is unauthenticated and never counts as
+verified.
