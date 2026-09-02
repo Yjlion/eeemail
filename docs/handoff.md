@@ -127,7 +127,7 @@ failure mode this whole script exists to rule out. That negative has been
 observed, not assumed.
 
 **4. A held message is never released to a contact verified on another row.**
-Found while writing step 5, and *not* fixed here. `gating::release`
+Found while writing step 5, and *not* fixed here — issue #13. `gating::release`
 (`gating.rs:189`) selects held mail with `WHERE m.from_id=?`, per contact row,
 while `is_trusted` (`:65`) decides per person across rows. Cold mail is held on
 the sender's *address* row — no signature meant no fingerprint at
@@ -236,6 +236,8 @@ unless something was decrypted, so `store` takes `imf_raw` too.
    the upstream binary on `docs/interop-upstream`, or build it from the
    vendored history, so the job does not depend on GitHub releases being up.
 3. Thunderbird and a mainstream provider (#5) — the half of interop that is
-   left, and the half a script in this environment cannot reach.
+   left, and the half a script in this environment cannot reach. #14 is the
+   closest automatable substitute: a GnuPG-driven client, which would at least
+   prove our outgoing PGP/MIME is readable by something that is not rPGP.
 4. Sending structured data, and a shell-mediated way to open a link — the two
    things Phase 14b deliberately left out.

@@ -617,8 +617,8 @@ def step5_securejoin_they_invite(upstream: Rpc, grace: int, ee: Rpc, frank: int)
     # Deliberately not asserted: that verifying grace below releases this. It
     # does not -- `gating::release` selects held mail per contact *row* while
     # `is_trusted` decides per person, so mail held on the address row is never
-    # found when the key row is verified. That is a real bug with its own issue
-    # and its own regression test; it is not this pass's to hide or to fix.
+    # found when the key row is verified. That is issue #13, with its own
+    # regression test to write; it is not this pass's to hide or to fix.
 
     qr = upstream.call("get_chat_securejoin_qr_code", grace, None)
     ee.call("secure_join", frank, qr, timeout=SECUREJOIN_TIMEOUT)
