@@ -51,5 +51,6 @@ Read [ADR 0001](adr/0001-fork-chatmail-core.md). The short version:
 
 See [`fork-patches.md`](fork-patches.md#merging-from-upstream). Note that a green
 test run does **not** prove we still interoperate — upstream changes crypto and
-protocol code routinely, so the Autocrypt and SecureJoin interop tests against a
-real Delta Chat client are part of every merge.
+protocol code routinely, so `scripts/interop-pass.py`, which runs eeemail
+against upstream's own released binary, is part of every merge. Move the pin in
+[`interop-upstream`](interop-upstream) with [`fork-base`](fork-base).

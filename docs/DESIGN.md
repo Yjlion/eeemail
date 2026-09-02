@@ -353,10 +353,14 @@ Two properties are load-bearing and each has a test guarding it. **Dedup hashes 
 
 **Per phase.** Unit tests in-crate; upstream's existing test suite must stay green after every merge. Integration tests run against `server/compose` — our own Postfix + Dovecot template — driven through `scripts/e2e-pass.py`, which speaks JSON-RPC to `deltachat-rpc-server`. Not through `cli/`: the CLI is one-shot with no daemon, so it never starts core's IO loop and can neither send nor receive. `cargo clippy -- -D warnings` and `cargo fmt --check` in CI. Additionally test against at least one mainstream provider (Gmail or Fastmail) so we never quietly become dependent on our own server's quirks.
 
-**Protocol interop — the tests that actually matter.**
-- **Autocrypt:** exchange mail with Delta Chat and with Thunderbird; keys learned both directions, replies encrypt automatically.
-- **SecureJoin:** complete Setup-Contact against a real Delta Chat client, scanning in each direction; both sides reach verified.
-- **Classic email:** a subject-bearing, CC'd, attachment-carrying message from eeemail renders and threads correctly in Thunderbird and Gmail — and the reverse.
+**Protocol interop — the tests that actually matter.** Automated by `scripts/interop-pass.py`, which runs eeemail's `deltachat-rpc-server` against upstream's released one at the pinned tag in [`interop-upstream`](interop-upstream). That binary is not a stand-in for Delta Chat: the same release publishes the `deltachat-stdio-rpc-server` tarball that Delta Chat Desktop installs, so driving it is driving Delta Chat's engine. What stays untested against a Delta Chat client is its UI.
+
+- **Autocrypt:** ✅ against Delta Chat's engine — keys learned both directions and replies encrypt automatically, including the unilateral bootstrap of [ADR 0021](adr/0021-autocrypt-key-contacts.md), which is shown to pull a stock client that cannot bootstrap on its own into encryption. ❌ against Thunderbird.
+- **SecureJoin:** ✅ against Delta Chat's engine, scanning in each direction; both sides reach verified. This is the first thing here that crosses a build boundary rather than running the same core twice.
+- **Classic email:** ✅ outbound — a subject-bearing, Cc'd, attachment-carrying message from eeemail arrives at Delta Chat's engine with subject and attachment intact, and its `Cc` is asserted in a third party's raw mailbox because stock core carries no per-message recipient set. ✅ inbound threading, against `In-Reply-To`/`References` a foreign client wrote. ❌ rendering in Thunderbird and Gmail. A user-authored `Subject` and any `Cc` are not assertable *from* stock core: they are absent from a chat client's model, not merely unexercised.
+- **A mainstream provider** (Gmail or Fastmail): ❌ untouched, and needing credentials CI does not have.
+
+**What the interop pass found, and what it means for ADR 0021.** Upstream defaults `force_encryption` to on, and it is not advisory: a stock client will not *send* an unencrypted message (`chat.rs:2958`), will not *download* one (`imap.rs:1694`), and trashes it if it arrives anyway (`receive_imf.rs:509`). So a Delta Chat client in its shipped configuration cannot exchange cleartext in either direction, and eeemail's opportunistic bootstrap can never begin with one — the first message is dropped before it is parsed and no Autocrypt header is ever seen. The pass asserts that default rather than hiding it, then turns the setting off, which is the configuration Delta Chat offers for talking to ordinary email and the only one in which classic mail flows at all. Everything downstream of that single setting is what the pass proves. eeemail's own accounts reach the same place through `email::policy::apply_defaults`.
 
 **Data-safety regressions — these must never land.**
 - **No plaintext leaves the device:** capture all IMAP APPEND and SMTP traffic during a full sync-and-send cycle and assert no decrypted body or subject appears in it, including in `BccSelf` self-copies.
@@ -371,7 +375,17 @@ Two properties are load-bearing and each has a test guarding it. **Dedup hashes 
 5. **Encryption at rest.** Blob encryption refuses to run on a cleartext database, then a passphrase and a full blobdir migration are checked through `get_at_rest_protection`.
 6. **Screenshots.** Regenerated from fixtures and byte-stable; touches no server.
 
-Step 3b additionally completes SecureJoin between the two accounts and asserts the resulting mail is encrypted and verified. That exercises the code but is **not** interop: both sides are the same core. Interop against Thunderbird, Gmail and a real Delta Chat client (issue #5) remains open.
+Step 3b additionally completes SecureJoin between the two accounts and asserts the resulting mail is encrypted and verified. That exercises the code but is **not** interop: both sides are the same core. `scripts/interop-pass.py` is.
+
+**Interop — against a second implementation.** `scripts/interop-pass.py`, on two independent account pairs (`dana`/`erin` and `frank`/`grace`) so that neither direction of SecureJoin starts from the other's answer:
+
+1. **Two engines.** Four accounts, ours configured with the defaults asserted as in step 1 above. Then `apply_eeemail_defaults` is called on the *stock* account and must fail with JSON-RPC `-32601` — without that, pointing both ends at our own binary would yield a fully green run proving nothing.
+2. **The Autocrypt bootstrap, hop by hop.** eeemail's first message is cleartext and a stock client agrees it is. The stock client's reply is *also* cleartext, because upstream imports the advertised key and attaches it to no contact — this is the tripwire that tells us if upstream ever reinstates Autocrypt-derived contacts. eeemail adopts the key, encrypts, and the stock engine decrypts and verifies. Our signature then mints a key-contact on that side, and its next reply comes back encrypted — with nobody having scanned anything, which is [ADR 0006](adr/0006-encryption-policy.md)'s promise, demonstrated across an implementation boundary for the first time.
+3. **Classic email inbound.** A stock client's attachment arrives and threads onto our original.
+4. **SecureJoin, a stock client scanning our code.**
+5. **SecureJoin, us scanning a stock client's code**, after a genuinely foreign stranger's mail is held by [ADR 0018](adr/0018-contact-gating.md)'s gating.
+
+Interop against Thunderbird, Gmail and a real mail provider (issue #5) remains open, and is not automatable in this environment.
 
 ---
 

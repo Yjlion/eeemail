@@ -43,12 +43,20 @@ Then, in the same pull request:
 
 1. Resolve conflicts. The table below tells you what each of our patches to an
    upstream file was for; preserve the intent, not necessarily the diff.
-2. Update `docs/fork-base` to the new upstream commit and "Last merged" above.
+2. Update `docs/fork-base` to the new upstream commit and "Last merged" above,
+   and `docs/interop-upstream` to the tag you merged to. The two move together:
+   the interop pass is only unambiguous when it runs against the release we are
+   actually forked from. `scripts/interop-pass.py --fetch-only` prints the hash
+   it observed when the recorded one no longer matches, so re-recording it is
+   copy-paste.
 3. Re-run the full test suite (`cd core && cargo nextest run --workspace`;
    see [`testing.md`](testing.md) for why not `cargo test`).
-4. Re-run the interop tests -- Autocrypt and SecureJoin against a real Delta
-   Chat client. Upstream changes crypto and protocol code routinely, and a green
-   unit-test run does not prove we still interoperate.
+4. Re-run `scripts/interop-pass.py` -- Autocrypt and SecureJoin against
+   upstream's own released binary. Upstream changes crypto and protocol code
+   routinely, and a green unit-test run does not prove we still interoperate.
+   Read this ledger's note on ADR 0021 first: it is the one place we diverge
+   from something upstream changed deliberately, so it is the first thing a
+   merge will break.
 
 Never merge upstream and change our own behavior in the same commit. If a merge
 needs adaptation, land the merge first and the adaptation second, so a bisect
