@@ -1054,6 +1054,13 @@ UPDATE msgs SET state=? WHERE
             .context("failed to apply inbox gating")
             .log_err(context)
             .ok();
+        // After gating, so the stored trust verdict agrees with where the
+        // message actually landed.
+        crate::email::structured::store(context, msg_id, &mime_parser, imf_raw)
+            .await
+            .context("failed to extract structured data")
+            .log_err(context)
+            .ok();
     }
     // Learns the sender's advertised key, so that our *next* message to them
     // can be encrypted. Outside the per-message loop: the key belongs to the

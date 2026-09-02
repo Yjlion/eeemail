@@ -53,8 +53,9 @@ you to accept or verify them and is then discarded. See
 
 ## Status
 
-**Engine complete through Phase 9; the desktop client reads but does not yet
-write.** `core/` is a fork of
+**Engine complete through Phase 14; the desktop client reads and writes, and
+the whole thing has now been run end to end against a real mail server.**
+`core/` is a fork of
 [`chatmail/core`](https://github.com/chatmail/core) at `v2.59.0`, vendored via
 `git subtree`, with eeemail's own code confined to `core/src/email/`.
 
@@ -70,19 +71,29 @@ write.** `core/` is a fork of
 | Encrypted backup with staleness tracking | ✅ |
 | JSON-RPC API and headless CLI | ✅ |
 | Desktop reading client (Tauri) | ✅ |
-| System tags, contact gating, recoverable ephemeral expiry | 🚧 Phase 11 |
-| Composer, account setup, contacts and QR in the GUI | 🚧 Phase 12 |
-| Blobdir encryption at rest | 🚧 Phase 13 |
-| Structured email ([SML](https://structured.email/)) | 🚧 Phase 14 |
+| System tags, contact gating, recoverable ephemeral expiry | ✅ |
+| Composer, account setup, contacts and QR in the GUI | ✅ |
+| Blobdir encryption at rest | ✅ |
+| Screenshots rendered from fixtures | ✅ |
+| End-to-end pass against a live server | ✅ |
+| Structured email ([SML](https://structured.email/)) | ✅ |
 
 Inherited from `chatmail/core` and interop-tested upstream: Autocrypt,
 SecureJoin QR verification, PGP/MIME, protected headers, multi-device sync.
 
-**Known gaps, stated plainly.** Database encryption currently leaves attachments
-and retained message sources in cleartext in the blobdir — the app reports this
-rather than claiming otherwise, and Phase 13 closes it. Encrypted mail can
-silently omit a recipient whose key is missing; eeemail records who and can tell
-you. Nothing here has been interop-tested against Thunderbird or Gmail yet.
+**Known gaps, stated plainly.** Encryption bootstraps from the `Autocrypt:`
+header a correspondent advertises, which is unauthenticated: it protects against
+someone reading stored mail, not against someone rewriting mail in flight. That
+is Autocrypt's own threat model, and it is why "encrypted" and "verified" are
+two separate badges — only a QR verification survives an active attacker. See
+[ADR 0021](docs/adr/0021-autocrypt-key-contacts.md), which reverses an upstream
+`v2.59` decision and explains what that costs. Blob encryption is real but
+opt-in, and requires
+a database passphrase; until you set one, attachments and retained message
+sources stay cleartext in the blobdir, and the app says so rather than claiming
+otherwise. Encrypted mail can silently omit a recipient whose key is missing;
+eeemail records who and can tell you. Nothing here has been interop-tested
+against Thunderbird, Gmail or a real Delta Chat client yet.
 See the [open issues](https://github.com/Yjlion/eeemail/issues).
 
 ## Documentation

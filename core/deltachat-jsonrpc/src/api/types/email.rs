@@ -11,6 +11,7 @@ use deltachat::email::labels::Label;
 use deltachat::email::policy::{EncryptionMode, MessageCrypto, ServerRetention};
 use deltachat::email::receipts::MdnPolicy;
 use deltachat::email::recipients::{Recipient, RecipientKind};
+use deltachat::email::structured;
 use deltachat::email::tags::{SystemTag, Tags};
 use deltachat::email::threading::ThreadNode;
 use serde::{Deserialize, Serialize};
@@ -492,4 +493,61 @@ pub struct JsonrpcMessageRow {
     pub has_attachment: bool,
     /// System tags on the message, in sidebar order.
     pub tags: Vec<JsonrpcSystemTag>,
+}
+
+/// Where a structured object came from, and so what it claims to represent.
+#[derive(Serialize, TypeDef, schemars::JsonSchema)]
+#[serde(rename = "StructuredSource", rename_all = "camelCase")]
+pub enum JsonrpcStructuredSource {
+    /// `multipart/alternative`: a full representation of the body.
+    Alternative,
+    /// `multipart/related`: a partial representation.
+    Related,
+    /// `multipart/mixed`, or anything else: neither.
+    Mixed,
+    /// A `<script type="application/ld+json">` in the HTML body.
+    HtmlScript,
+}
+
+impl From<structured::Source> for JsonrpcStructuredSource {
+    fn from(source: structured::Source) -> Self {
+        match source {
+            structured::Source::Alternative => Self::Alternative,
+            structured::Source::Related => Self::Related,
+            structured::Source::Mixed => Self::Mixed,
+            structured::Source::HtmlScript => Self::HtmlScript,
+        }
+    }
+}
+
+/// One machine-readable object a message carried about itself.
+#[derive(Serialize, TypeDef, schemars::JsonSchema)]
+#[serde(rename = "StructuredObject", rename_all = "camelCase")]
+pub struct JsonrpcStructuredObject {
+    /// Order within the message.
+    pub seq: u32,
+    /// The object exactly as it arrived, as JSON text.
+    ///
+    /// Returned unparsed: it is arbitrary JSON-LD with no schema we control,
+    /// and re-encoding it here would only lose whatever we failed to model.
+    pub json: String,
+    /// Whether it may drive an affordance.
+    ///
+    /// Computed once, at receive, from the message's encryption state and the
+    /// gating verdict on its sender. **Untrusted data must render inert** — no
+    /// links, no buttons, nothing that initiates a request.
+    pub trusted: bool,
+    /// Where it came from.
+    pub source: JsonrpcStructuredSource,
+}
+
+impl From<structured::StructuredObject> for JsonrpcStructuredObject {
+    fn from(object: structured::StructuredObject) -> Self {
+        Self {
+            seq: object.seq,
+            json: object.json,
+            trusted: object.trusted,
+            source: object.source.into(),
+        }
+    }
 }
