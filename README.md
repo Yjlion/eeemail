@@ -89,6 +89,7 @@ See the [open issues](https://github.com/Yjlion/eeemail/issues).
 
 - [`docs/DESIGN.md`](docs/DESIGN.md) — full design and phased implementation plan
 - [`docs/adr/`](docs/adr/) — architecture decision records
+- [`docs/handoff.md`](docs/handoff.md) — current state, gaps, and what to do next
 - [`docs/development.md`](docs/development.md) — build and fork workflow
 - [`docs/testing.md`](docs/testing.md) — why the suite needs `cargo nextest`
 - [`docs/out-of-scope.md`](docs/out-of-scope.md) — upstream features slated for removal
