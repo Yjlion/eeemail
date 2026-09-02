@@ -85,10 +85,22 @@ core exposes `imap_certificate_checks=accept_invalid_certificates`.
 
 ## `deploy/` — production deployment
 
-Not yet built. Intended to adapt the rest of relay's `cmdeploy` tree: OpenDKIM,
-`unbound`, `acmetool` for real certificates, MTA-STS, DNS record generation, and
-`chatmail-expire`-style retention (`delete_mails_after`, `delete_large_after`).
+**Deliberately not built** (decided 2026-09-01). `compose/` covers what the
+project needs today: a disposable target to develop and test application
+functionality against. Everything `deploy/` would add — OpenDKIM, `unbound`,
+`acmetool` for real certificates, MTA-STS, DNS record generation, `filtermail`
+at the perimeter, and `chatmail-expire`-style retention — depends on a real
+domain and real DNS. None of it can be written honestly, let alone verified,
+without one, and configuration nobody has ever run is worse than no
+configuration: it looks like a deployment path and is not.
 
-Note that relay's `delete_inactive_users_after` (90 days) deletes **entire
-mailboxes**. That is reasonable for disposable relay identities and unacceptable
-for a person's real address; it stays off.
+This is not a gap in eeemail. The client must work against any
+standards-compliant IMAP/SMTP provider, and a self-hosted server is a
+convenience for people who want one. When there is a domain to deploy to, the
+starting point is [`chatmail/relay`](https://github.com/chatmail/relay)'s
+`cmdeploy` tree, adapted per [ADR 0007](../docs/adr/0007-server-template.md).
+
+One thing to carry across when it happens: relay's
+`delete_inactive_users_after` (90 days) deletes **entire mailboxes**. That is
+reasonable for disposable relay identities and unacceptable for a person's real
+address; it stays off.

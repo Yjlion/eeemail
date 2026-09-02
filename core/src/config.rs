@@ -10,7 +10,6 @@ use deltachat_contact_tools::{addr_cmp, sanitize_single_line};
 use serde::{Deserialize, Serialize};
 use strum::{EnumProperty, IntoEnumIterator};
 use strum_macros::{AsRefStr, Display, EnumIter, EnumString};
-use tokio::fs;
 
 use crate::blob::BlobObject;
 use crate::context::Context;
@@ -450,16 +449,71 @@ pub enum Config {
     #[strum(props(default = "2"))]
     MdnPolicy,
 
+    /// eeemail: whether attachments and retained message sources are encrypted
+    /// on disk.
+    ///
+    /// **Off by default.** It costs CPU on every attachment, it breaks any
+    /// workflow that reaches into the blobdir with other tools, and its value
+    /// depends entirely on a threat model -- a stolen unlocked laptop is not
+    /// helped by it at all. Turning it on should be a decision.
+    ///
+    /// Requires a database passphrase: the blob key lives in the database, so
+    /// encrypting blobs without encrypting the database protects nothing. Set
+    /// through `email::blobcrypt::enable`, which migrates the blobs already on
+    /// disk; writing this key directly only changes what new blobs do.
+    ///
+    /// See docs/adr/0020-blobdir-encryption.md.
+    #[strum(props(default = "0"))]
+    BlobEncryption,
+
+    /// eeemail: whether mail from a sender who is neither verified nor known
+    /// is held rather than delivered to the inbox.
+    ///
+    /// **On by default.** A gate the user has to find and enable protects only
+    /// the people who already knew to look for it. Held mail is downloaded and
+    /// decrypted normally -- `Holding` is a view, not a refusal to fetch -- and
+    /// is discarded after `email::gating::HOLD_DAYS` if the sender is never
+    /// accepted.
+    ///
+    /// eeemail turns this **on** for its own accounts in
+    /// `email::policy::apply_defaults`, and keeps upstream's default here.
+    /// Flipping the compile-time default breaks upstream tests that assert
+    /// mail from a stranger reaches the inbox, and carrying those patches
+    /// forever is a poor trade for a value written once at setup -- the same
+    /// reasoning as `ForceEncryption`. See docs/adr/0012-rpc-and-cli.md.
+    ///
+    /// See docs/adr/0018-contact-gating.md.
+    #[strum(props(default = "0"))]
+    InboxGating,
+
+    /// eeemail: how many days an expired or deleted message stays recoverable
+    /// in `Trash` before it is destroyed.
+    ///
+    /// **0 means destroy immediately**, which is upstream's behaviour and the
+    /// compile-time default for the same reason `InboxGating` is off here:
+    /// upstream's ephemeral tests assert that a fired timer removes the
+    /// message. `email::policy::apply_defaults` sets it to
+    /// `email::ephemeral::DEFAULT_PURGE_DAYS` for eeemail accounts.
+    ///
+    /// Expressing the window as a setting rather than a constant also lets a
+    /// user who wants a fired timer to mean *gone* say so.
+    ///
+    /// See docs/adr/0019-recoverable-ephemeral-expiry.md.
+    #[strum(props(default = "0"))]
+    EphemeralTrashDays,
+
     /// eeemail: ephemeral timer applied to a conversation when the first
     /// message is sent to it, in seconds. 0 disables it.
     ///
-    /// **Shipped as 0.** Ephemeral deletion removes the message locally too,
-    /// and the local store is the only durable copy of the mailbox
-    /// (docs/adr/0004-local-store-and-raw-mime.md), so a non-zero default
-    /// silently destroys mail. The machinery is complete and honours whatever
-    /// this is set to.
+    /// **Shipped as 0**, and that is now a preference rather than a safety
+    /// measure. Expiry used to destroy the local copy outright; since
+    /// docs/adr/0019-recoverable-ephemeral-expiry.md it moves the message to
+    /// `Trash` for `email::ephemeral::PURGE_DAYS` first, so a timer no longer
+    /// loses mail. What is left is the judgement that whether mail expires is
+    /// the user's call, and that no duration is right for everyone.
     ///
-    /// See docs/adr/0011-receipts-and-ephemeral.md.
+    /// See docs/adr/0011-receipts-and-ephemeral.md and
+    /// docs/adr/0019-recoverable-ephemeral-expiry.md.
     #[strum(props(default = "0"))]
     EphemeralDefaultSeconds,
 
@@ -806,7 +860,10 @@ impl Context {
                             .set_raw_config(key.as_ref(), Some(blob.as_name()))
                             .await?;
                         if sync {
-                            let buf = fs::read(blob.to_abs_path()).await?;
+                            // eeemail: transparent, so this is correct whether or not
+                            // blobs are encrypted at rest.
+                            let buf =
+                                crate::email::blobcrypt::read(self, &blob.to_abs_path()).await?;
                             better_value = base64::engine::general_purpose::STANDARD.encode(buf);
                             value = Some(&better_value);
                         }

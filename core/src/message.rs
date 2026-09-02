@@ -684,7 +684,8 @@ impl Message {
         let path = self
             .get_file(context)
             .context("vCard message does not have an attachment")?;
-        let bytes = tokio::fs::read(path).await?;
+        // eeemail: transparent; see email::blobcrypt.
+        let bytes = crate::email::blobcrypt::read(context, &path).await?;
         let vcard_contents = std::str::from_utf8(&bytes).context("vCard is not a valid UTF-8")?;
         Ok(parse_vcard(vcard_contents))
     }
@@ -1152,7 +1153,7 @@ impl Message {
 
     /// Updates message state from the vCard attachment.
     pub(crate) async fn try_set_vcard(&mut self, context: &Context, path: &Path) -> Result<()> {
-        let vcard = fs::read(path)
+        let vcard = crate::email::blobcrypt::read(context, path)
             .await
             .with_context(|| format!("Could not read {path:?}"))?;
         if let Some(summary) = get_vcard_summary(&vcard) {

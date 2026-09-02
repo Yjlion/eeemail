@@ -1,6 +1,6 @@
 # 0015 — Database encryption is reported as partial, because the blobdir holds cleartext mail
 
-**Status:** Accepted — 2026-09-01
+**Status:** Accepted — 2026-09-01 · The blobdir gap it records is closed by [0020](0020-blobdir-encryption.md)
 
 ## Context
 

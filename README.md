@@ -8,7 +8,27 @@ ephemeral messages, multi-device sync — but presents them as a chat client, an
 upstream has no interest in a traditional email interface.
 
 eeemail keeps the encryption engine and builds the email client: subjects,
-CC/BCC, threads, attachments, search, drafts and labels.
+CC/BCC, threads, attachments, search, drafts and tags.
+
+> **How this was built.** Most of the code and documentation here was written by
+> a large language model working under human direction — "vibe coded", if you
+> like. It is reviewed, it is tested, and the tests pass; it has **not** been
+> audited by a security professional, and an encrypted mail client is exactly
+> the kind of software where that distinction matters. Read it before you trust
+> it, and do not rely on it for anything consequential yet.
+
+## What it looks like
+
+| | |
+|---|---|
+| ![Inbox](screenshots/inbox.png) | ![Reading a threaded conversation](screenshots/reading.png) |
+| **Inbox.** System tags on the left, mail in the middle, encryption state on every row. | **Reading.** Thread, recipients, and what the encryption actually was. |
+| ![Holding](screenshots/holding.png) | ![Settings](screenshots/settings.png) |
+| **Holding.** Mail from senders you have not accepted, with 30 days to change your mind. | **Settings.** The at-rest panel says what is *not* protected, not just what is. |
+
+More in [`screenshots/`](screenshots/). These are rendered from fixture data by
+[`scripts/screenshots.sh`](scripts/screenshots.sh) — never from a real mailbox —
+so they regenerate identically and a change in the images is a change in the UI.
 
 ## How it works
 
@@ -21,17 +41,59 @@ Encryption is opportunistic by default — encrypted whenever the recipient's ke
 is known, cleartext otherwise, clearly marked either way — and can be set
 stricter (E2E only) or more lenient.
 
+**There are no folders.** Most people do not want to file mail, so the mailbox
+organizes itself: Inbox, Sent, Drafts, Archive, Trash and Holding are system
+tags derived from what a message *is*, and users add their own tags on top. A
+message can carry several. See [ADR 0017](docs/adr/0017-system-tags.md).
+
+**Mail from strangers does not reach the inbox.** A sender who is neither
+verified nor in your address book lands in Holding, where it waits 30 days for
+you to accept or verify them and is then discarded. See
+[ADR 0018](docs/adr/0018-contact-gating.md).
+
 ## Status
 
-**Phase 0 — foundation.** `core/` is a fork of
+**Engine complete through Phase 9; the desktop client reads but does not yet
+write.** `core/` is a fork of
 [`chatmail/core`](https://github.com/chatmail/core) at `v2.59.0`, vendored via
-`git subtree`. No email-client code yet.
+`git subtree`, with eeemail's own code confined to `core/src/email/`.
+
+| Area | State |
+|---|---|
+| Raw MIME retention with configurable expiry | ✅ |
+| Per-message To/Cc/Bcc recipient sets, Cc/Bcc on the wire | ✅ |
+| Conversation threading over `References`/`In-Reply-To` | ✅ |
+| Tags, archive, search, device sync | ✅ |
+| Encryption policy: strict / opportunistic / lenient, per-contact | ✅ |
+| Server retention: delete-after-download / keep N days / never | ✅ |
+| Read-receipt policy, per-contact overrides | ✅ |
+| Encrypted backup with staleness tracking | ✅ |
+| JSON-RPC API and headless CLI | ✅ |
+| Desktop reading client (Tauri) | ✅ |
+| System tags, contact gating, recoverable ephemeral expiry | 🚧 Phase 11 |
+| Composer, account setup, contacts and QR in the GUI | 🚧 Phase 12 |
+| Blobdir encryption at rest | 🚧 Phase 13 |
+| Structured email ([SML](https://structured.email/)) | 🚧 Phase 14 |
+
+Inherited from `chatmail/core` and interop-tested upstream: Autocrypt,
+SecureJoin QR verification, PGP/MIME, protected headers, multi-device sync.
+
+**Known gaps, stated plainly.** Database encryption currently leaves attachments
+and retained message sources in cleartext in the blobdir — the app reports this
+rather than claiming otherwise, and Phase 13 closes it. Encrypted mail can
+silently omit a recipient whose key is missing; eeemail records who and can tell
+you. Nothing here has been interop-tested against Thunderbird or Gmail yet.
+See the [open issues](https://github.com/Yjlion/eeemail/issues).
+
+## Documentation
 
 - [`docs/DESIGN.md`](docs/DESIGN.md) — full design and phased implementation plan
 - [`docs/adr/`](docs/adr/) — architecture decision records
+- [`docs/handoff.md`](docs/handoff.md) — current state, gaps, and what to do next
 - [`docs/development.md`](docs/development.md) — build and fork workflow
 - [`docs/testing.md`](docs/testing.md) — why the suite needs `cargo nextest`
 - [`docs/out-of-scope.md`](docs/out-of-scope.md) — upstream features slated for removal
+- [`server/`](server/) — a Postfix/Dovecot test server to develop against
 
 ## License
 

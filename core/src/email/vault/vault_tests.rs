@@ -85,3 +85,48 @@ this body is in the blobdir in cleartext\r\n";
     );
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_a_plaintext_database_can_be_encrypted() -> Result<()> {
+    let t = TestContext::new_alice().await;
+    assert!(!protection(&t).await?.database_encrypted);
+
+    // The operation a user actually wants. `PRAGMA rekey` cannot do this --
+    // SQLCipher refuses it on a plaintext database -- so this goes through
+    // `sqlcipher_export`, and this test is what stops that regressing to a
+    // rekey that silently only works for accounts that were already encrypted.
+    set_passphrase(&t, "correct horse battery staple").await?;
+    assert!(protection(&t).await?.database_encrypted);
+
+    // And the mailbox survived the copy.
+    assert_eq!(
+        t.get_config(crate::config::Config::Addr).await?,
+        Some("alice@example.org".to_string())
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_the_passphrase_can_be_changed_and_removed() -> Result<()> {
+    let t = TestContext::new_alice().await;
+    set_passphrase(&t, "first").await?;
+    // Encrypted to encrypted is a rekey, not a copy.
+    set_passphrase(&t, "second").await?;
+    assert!(protection(&t).await?.database_encrypted);
+
+    set_passphrase(&t, "").await?;
+    assert!(!protection(&t).await?.database_encrypted);
+    assert_eq!(
+        t.get_config(crate::config::Config::Addr).await?,
+        Some("alice@example.org".to_string())
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_setting_no_passphrase_on_a_plaintext_database_is_a_no_op() -> Result<()> {
+    let t = TestContext::new_alice().await;
+    set_passphrase(&t, "").await?;
+    assert!(!protection(&t).await?.database_encrypted);
+    Ok(())
+}

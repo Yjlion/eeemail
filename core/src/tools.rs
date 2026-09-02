@@ -481,10 +481,13 @@ pub(crate) async fn write_file(
 }
 
 /// Reads the file and returns its context as a byte vector.
+///
+/// eeemail: goes through `email::blobcrypt::read`, which decrypts a blob that
+/// is encrypted at rest and passes anything else through untouched.
 pub async fn read_file(context: &Context, path: &Path) -> Result<Vec<u8>> {
     let path_abs = get_abs_path(context, path);
 
-    match fs::read(&path_abs).await {
+    match crate::email::blobcrypt::read(context, &path_abs).await {
         Ok(bytes) => Ok(bytes),
         Err(err) => {
             warn!(
@@ -493,7 +496,7 @@ pub async fn read_file(context: &Context, path: &Path) -> Result<Vec<u8>> {
                 path.display(),
                 err
             );
-            Err(err.into())
+            Err(err)
         }
     }
 }

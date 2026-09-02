@@ -60,6 +60,45 @@ async fn rpc_send(state: tauri::State<'_, Arc<AppState>>, request: String) -> Re
     Ok(())
 }
 
+/// Writes a picked attachment somewhere the engine can read it, and returns
+/// the path.
+///
+/// A `File` in the renderer has no filesystem path -- the browser security
+/// model does not give it one -- and the engine takes a path, because that is
+/// how core carries attachments. So the bytes come across the IPC boundary once
+/// and land in a staging directory beside the accounts.
+///
+/// The file name is reduced to its last component before use: a name is
+/// attacker-influenced whenever the user forwards something, and `../` in it
+/// would otherwise write outside the staging directory.
+#[tauri::command]
+async fn stage_attachment(name: String, bytes: Vec<u8>) -> Result<String, String> {
+    let dir = accounts_dir()
+        .map_err(|err| err.to_string())?
+        .join("staging");
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|err| format!("cannot create {}: {err}", dir.display()))?;
+
+    let safe = std::path::Path::new(&name)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .filter(|n| !n.is_empty() && n != "." && n != "..")
+        .unwrap_or_else(|| "attachment".to_string());
+    // Prefixed with a nanosecond timestamp so two files with the same name in
+    // one session do not overwrite each other mid-compose.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let path = dir.join(format!("{stamp}-{safe}"));
+
+    tokio::fs::write(&path, &bytes)
+        .await
+        .map_err(|err| format!("cannot write {}: {err}", path.display()))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 fn main() -> Result<()> {
     tauri::async_runtime::block_on(async { run().await })
 }
@@ -97,7 +136,7 @@ async fn run() -> Result<()> {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![rpc_send])
+        .invoke_handler(tauri::generate_handler![rpc_send, stage_attachment])
         .run(tauri::generate_context!())
         .context("cannot run the desktop shell")?;
     Ok(())

@@ -459,6 +459,18 @@ WHERE
 /// Also see [`delete_expired_imap_messages`],
 /// which marks the messages for deletion on the IMAP server.
 pub(crate) async fn delete_expired_messages(context: &Context, now: i64) -> Result<()> {
+    // eeemail: an ephemeral timer that fires moves the message to `Trash` for a
+    // recoverable window instead of destroying it here. This clears
+    // `ephemeral_timestamp` on what it takes, so the select below no longer
+    // sees those rows; `delete_device_after` expiries are deliberately left for
+    // core to destroy. Best-effort: failing to divert must not stop expiry.
+    // See docs/adr/0019-recoverable-ephemeral-expiry.md.
+    crate::email::ephemeral::divert(context, now)
+        .await
+        .context("failed to divert expired messages to the trash")
+        .log_err(context)
+        .ok();
+
     let rows = select_expired_messages(context, now).await?;
 
     if !rows.is_empty() {

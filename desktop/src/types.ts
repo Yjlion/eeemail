@@ -22,6 +22,47 @@ export type Label = {
   isSystem: boolean;
 };
 
+/**
+ * A tag every account has without the user creating anything.
+ *
+ * Three of these are stored as reserved labels and three are derived from
+ * message state. Which is which is deliberately not visible here: the engine
+ * returns them through one type so a client cannot get the rule wrong.
+ * See `docs/adr/0017-system-tags.md`.
+ */
+export type SystemTag = "inbox" | "holding" | "sent" | "drafts" | "archive" | "trash";
+
+export const SYSTEM_TAGS: SystemTag[] = [
+  "inbox",
+  "holding",
+  "sent",
+  "drafts",
+  "archive",
+  "trash",
+];
+
+export const TAG_LABELS: Record<SystemTag, string> = {
+  inbox: "Inbox",
+  holding: "Holding",
+  sent: "Sent",
+  drafts: "Drafts",
+  archive: "Archive",
+  trash: "Trash",
+};
+
+export type MessageTags = {
+  system: SystemTag[];
+  user: Label[];
+};
+
+export type TrashReason = "deleted" | "expired";
+
+export type TrashedMessage = {
+  trashedAt: number;
+  purgeAt: number;
+  reason: TrashReason;
+};
+
 export type ThreadItem = {
   msgId: number;
   parentMsgId: number | null;
@@ -34,6 +75,20 @@ export type MessageCrypto = {
   verified: boolean;
 };
 
+/** Everything a list row needs, from one RPC rather than two per row. */
+export type MessageRow = {
+  msgId: number;
+  subject: string;
+  preview: string;
+  from: string;
+  timestamp: number;
+  unread: boolean;
+  encrypted: boolean;
+  verified: boolean;
+  hasAttachment: boolean;
+  tags: SystemTag[];
+};
+
 export type EncryptionMode = "strict" | "opportunistic" | "lenient";
 export type MdnPolicy = "never" | "verifiedOnly" | "always";
 
@@ -42,6 +97,7 @@ export type Message = {
   chatId: number;
   subject: string;
   text: string;
+  hasHtml?: boolean;
   fromId: number;
   timestamp: number;
   state: string;
@@ -52,4 +108,20 @@ export type Contact = {
   address: string;
   displayName: string;
   isVerified: boolean;
+  isBlocked?: boolean;
+};
+
+export type RecipientSet = {
+  to: string[];
+  cc: string[];
+  bcc: string[];
+};
+
+/** What at-rest protection is actually in force. Rendered verbatim. */
+export type AtRestProtection = {
+  databaseEncrypted: boolean;
+  blobsEncrypted: boolean;
+  cleartextBytes: number;
+  partial: boolean;
+  summary: string;
 };

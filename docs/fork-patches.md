@@ -87,6 +87,26 @@ can tell them apart.
 | `core/deltachat-jsonrpc/src/api/types/mod.rs` | `pub mod email;`. | Registers our types. | [0012](adr/0012-rpc-and-cli.md) |
 | `core/src/mimefactory.rs` | Added a `cc` field to `MimeFactory`, a block merging extra Cc/Bcc recipients into the envelope and key set before the encryption branch, a `Cc` header in `render_headers`, and a `cc_header()` accessor. | Core emits no `Cc` at all and derives addressing from chat membership, so a composer had nothing to write to. Placed **before** the encryption branch on purpose: inside it, every Cc was silently dropped from unencrypted mail. | [0014](adr/0014-recipient-sets-on-the-wire.md) |
 
+| `core/src/sql/migrations.rs` | Migration 169: `CREATE TABLE held_msgs`, `trashed_msgs`, and the reserved `Trash` and `Holding` rows. | Contact gating and the recoverable trash. Both tables hold a **local** purge deadline that is deliberately never synced. | [0017](adr/0017-system-tags.md), [0018](adr/0018-contact-gating.md), [0019](adr/0019-recoverable-ephemeral-expiry.md) |
+| `core/src/config.rs` | Added `Config::InboxGating` and `Config::EphemeralTrashDays`, **both defaulting to upstream's behaviour** (`0`). Rewrote the `EphemeralDefaultSeconds` rationale, which described a destructive expiry that no longer exists. | eeemail turns both on in `email::policy::apply_defaults` instead. Flipping the compile-time defaults broke eight upstream tests that assert a fired timer destroys the message and that a stranger's mail reaches the inbox — the same trade `ForceEncryption` already refused. Upstream test churn: zero. | [0012](adr/0012-rpc-and-cli.md), [0018](adr/0018-contact-gating.md), [0019](adr/0019-recoverable-ephemeral-expiry.md) |
+| `core/src/receive_imf.rs` | One more call, `email::gating::apply`, in the existing best-effort block. | Holds mail from a sender who is neither verified nor known. Placed after `drain_pending` so a label synced from another device is already on the message when this classifies it. No new patch site: the block was already there. | [0018](adr/0018-contact-gating.md) |
+| `core/src/contact.rs` | Two `email::gating::release` calls: one after the transaction in `ContactId::scaleup_origin`, one after the transaction in `mark_contact_id_as_verified`. | The two ways a sender becomes trusted, and therefore the two places their held mail must be let out. Best-effort. `release` re-checks each contact rather than trusting the call site, because origin is scaled up constantly and most scale-ups do not cross into trusted -- so if upstream moves these, re-place them at whatever the new choke points are and the behaviour is unchanged. | [0018](adr/0018-contact-gating.md) |
+| `core/src/ephemeral.rs` | One best-effort `email::ephemeral::divert` call at the top of `delete_expired_messages`, before `select_expired_messages`. | Expiry moves a message to `Trash` for a recoverable window instead of destroying it. **The ordering is the patch**: `divert` clears `ephemeral_timestamp` on what it takes, so the select immediately below no longer sees those rows. If upstream restructures this function, the call must stay ahead of the select or expiry becomes destructive again, silently. `delete_device_after` expiries are deliberately left for core to destroy. | [0019](adr/0019-recoverable-ephemeral-expiry.md) |
+| `core/src/sql.rs` | `email::gating::purge` and `email::ephemeral::purge` added to the eeemail housekeeping block. | The two purge deadlines. Both destroy mail through `MsgId::trash`, and both run before reference collection so freed blobs are reclaimed in the same pass. | [0018](adr/0018-contact-gating.md), [0019](adr/0019-recoverable-ephemeral-expiry.md) |
+| `core/deltachat-jsonrpc/src/api.rs` | Four more imports and a second contiguous block of thin methods at the end of `impl CommandApi`, covering tags, gating and the trash. | Same constraint as the first block: `yerpc`'s `#[rpc]` applies to one `impl`. Re-place the block rather than replaying the diff. | [0017](adr/0017-system-tags.md), [0018](adr/0018-contact-gating.md), [0019](adr/0019-recoverable-ephemeral-expiry.md) |
+
+| `core/Cargo.toml` | Added `chacha20poly1305 = "0.10"`. | Per-blob AEAD. Already in the lockfile via `rpgp`, so this promotes a transitive dependency to a direct one rather than adding a new one. | [0020](adr/0020-blobdir-encryption.md) |
+| `core/src/config.rs` | Added `Config::BlobEncryption` (default `0`). | Opt-in encryption of the blobdir, off by default. | [0020](adr/0020-blobdir-encryption.md) |
+| `core/src/context.rs` | Added `inbox_gating` and `blob_encryption` to the `get_info` map. | Upstream's `test_get_info_completeness` requires every `Config` key to appear in `get_info` or be explicitly skipped. | [0018](adr/0018-contact-gating.md), [0020](adr/0020-blobdir-encryption.md) |
+| `core/src/blob.rs` | One `email::blobcrypt::protect` call in `create_and_deduplicate`, immediately after the `rename` and **after** the hash. | Encrypts a blob once it is named. **The position is the patch**: the hash above it is taken over the *plaintext*, because hashing ciphertext with a random nonce would give every copy of the same message a different name and silently double disk usage. Moving this call above the hash compiles, passes most tests, and breaks deduplication. Best-effort, so a blob that fails to encrypt is still stored. | [0020](adr/0020-blobdir-encryption.md) |
+| `core/src/tools.rs` | `read_file` reads through `email::blobcrypt::read` instead of `fs::read`. | Transparent decryption. A file without the `EEEBLOB1` magic is returned untouched, so this is correct whether encryption is on, off, or part-way through a migration. | [0020](adr/0020-blobdir-encryption.md) |
+| `core/src/mimefactory.rs` | Two attachment reads switched to `email::blobcrypt::read`. | An attachment encrypted at rest must still reach the wire as plaintext. | [0020](adr/0020-blobdir-encryption.md) |
+| `core/src/config.rs` | Self-avatar read switched to `email::blobcrypt::read`. | Same. | [0020](adr/0020-blobdir-encryption.md) |
+| `core/src/contact.rs` | Avatar read switched to `email::blobcrypt::read`. | Same. | [0020](adr/0020-blobdir-encryption.md) |
+| `core/src/message.rs` | HTML-part and vCard reads switched to `email::blobcrypt::read`. | Same. | [0020](adr/0020-blobdir-encryption.md) |
+| `core/src/qr_code_generator.rs` | Two avatar reads switched to `email::blobcrypt::read`. | Same. | [0020](adr/0020-blobdir-encryption.md) |
+| `core/src/email/vault.rs` | `protection` measures the blobdir through `blobcrypt::cleartext_bytes` instead of hardcoding `blobs_encrypted: false`. | Ours, not upstream's, but listed because the honesty property depends on it: the value is measured from the files rather than read off the setting, so an interrupted migration reports `partial` rather than a half-truth. | [0015](adr/0015-at-rest-and-backup.md), [0020](adr/0020-blobdir-encryption.md) |
+
 Conflict guidance for the raw-MIME hooks: all three are single call sites whose
 *intent* is what matters -- retain originals on receive and send, expire them in
 housekeeping. If upstream restructures `receive_imf_inner`'s exits or
@@ -131,3 +151,25 @@ intent rather than trying to replay this diff.
 | `core/deltachat-jsonrpc/src/api/types/email.rs` | JSON-RPC types for the email layer | [0012](adr/0012-rpc-and-cli.md) |
 | `cli/` | Headless driver for development and integration tests | [0012](adr/0012-rpc-and-cli.md) |
 | `desktop/` | Tauri v2 shell and TypeScript frontend | [0013](adr/0013-desktop-ui.md) |
+
+Conflict guidance for the gating and trash hooks: the `ephemeral.rs` one is the
+only patch in this ledger whose **position** carries meaning rather than its
+content. `divert` must run before `select_expired_messages`, because it works by
+clearing the column that select reads. A merge that keeps the call but moves it
+after the select compiles, passes most tests, and silently restores the
+destructive behaviour ADR 0019 exists to remove. It is covered by
+`email::ephemeral::ephemeral_tests::test_expiry_clears_the_timer_so_core_does_not_destroy_it`.
+
+The two `contact.rs` hooks are the opposite: their position is incidental. They
+are at the two choke points through which a contact becomes known or verified
+today. If upstream moves those, re-place the calls at the new ones; `release`
+re-checks trust itself, so calling it too often is wasteful and never wrong.
+
+Conflict guidance for the at-rest hooks: the read redirections are mechanical
+and interchangeable -- each is one line, `fs::read(path)` becoming
+`email::blobcrypt::read(context, &path)`, and `read` is transparent, so a
+redirection that gets lost in a merge degrades to "this blob reads as
+ciphertext" rather than to a crash. The `blob.rs` write hook is the one that
+matters: it must stay **after** the hash and **after** the rename. There is a
+test, `blobcrypt_tests::test_dedup_still_hashes_plaintext`, and it is the only
+thing standing between a merge and a silently doubled blobdir.

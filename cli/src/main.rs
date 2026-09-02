@@ -44,9 +44,22 @@ Organization
   archive <msg-id>              archive a message
   unarchive <msg-id>            move a message back to the inbox
   search <text>                 search body, subject, recipients
+  tags <msg-id>                 every tag on a message, system and user
+  list <tag>                    inbox | holding | sent | drafts | archive | trash
+
+Gating and the trash
+  gating get                    whether unverified senders are held
+  gating set <on|off>           turn inbox gating on or off
+  release <contact-id>          release a contact's held mail
+  trash <msg-id>                throw a message away, recoverably
+  restore <msg-id>              take a message back out of the trash
+  ephemeral get <msg-id>        when this message expires, if ever
+  ephemeral set <msg-id> <secs> set one message's timer; 0 clears it
 
 Protection
   protection                    what at-rest encryption actually covers
+  protection passphrase <pass>  set the database passphrase (empty = off)
+  protection blobs <on|off>     encrypt attachments and message sources on disk
   backup status                 when the last backup was taken
   backup export <dir> <pass>    write an encrypted backup
 
@@ -185,15 +198,38 @@ async fn dispatch(ctx: &Context, command: &str, args: &[&str]) -> Result<Value> 
             let p = email::vault::protection(ctx).await?;
             Ok(json!({
                 "databaseEncrypted": p.database_encrypted,
-                // Always false. Nothing here encrypts the blobdir, which holds
-                // attachments and the original source of every retained
-                // message.
+                // Measured from the files, not read off the setting: after an
+                // interrupted migration those differ, and this is the one that
+                // is true.
                 "blobsEncrypted": p.blobs_encrypted,
                 "cleartextBytes": p.cleartext_bytes,
                 "partial": p.partial,
                 "summary": p.summary(),
             }))
         }
+        ("protection", ["passphrase", pass]) => {
+            email::vault::set_passphrase(ctx, pass).await?;
+            // Reported straight back, because setting a passphrase protects the
+            // database and not the blobdir, and a bare "ok" would read as more
+            // than that.
+            let p = email::vault::protection(ctx).await?;
+            Ok(json!({ "summary": p.summary() }))
+        }
+        ("protection", ["blobs", value]) => {
+            let converted = match *value {
+                "on" | "true" | "1" => email::blobcrypt::enable(ctx).await?,
+                "off" | "false" | "0" => email::blobcrypt::disable(ctx).await?,
+                other => bail!("expected on or off, got {other:?}"),
+            };
+            let p = email::vault::protection(ctx).await?;
+            Ok(json!({
+                "blobsConverted": converted,
+                "blobsEncrypted": p.blobs_encrypted,
+                "cleartextBytes": p.cleartext_bytes,
+                "summary": p.summary(),
+            }))
+        }
+
         ("backup", ["status"]) => {
             let status = email::backup::status(ctx).await?;
             Ok(json!({
@@ -255,6 +291,87 @@ async fn dispatch(ctx: &Context, command: &str, args: &[&str]) -> Result<Value> 
             Ok(json!({ "policy": format!("{policy:?}") }))
         }
 
+        ("tags", [id]) => {
+            let tags = email::tags::of_msg(ctx, msg_id(id)?).await?;
+            Ok(json!({
+                "system": tags.system.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
+                "user": tags.user.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
+            }))
+        }
+        ("list", [tag]) => {
+            let tag = email::tags::SystemTag::parse(tag)
+                .with_context(|| format!("unknown tag {tag:?}"))?;
+            let ids = email::tags::messages(ctx, tag).await?;
+            Ok(json!({
+                "tag": tag.as_str(),
+                "msgIds": ids.iter().map(|id| id.to_u32()).collect::<Vec<_>>(),
+            }))
+        }
+
+        ("gating", ["get"]) => Ok(json!({
+            "enabled": email::gating::is_enabled(ctx).await?,
+            "holdDays": email::gating::HOLD_DAYS,
+            "held": email::gating::held(ctx).await?.len(),
+        })),
+        ("gating", ["set", value]) => {
+            let enabled = match *value {
+                "on" | "true" | "1" => true,
+                "off" | "false" | "0" => false,
+                other => bail!("expected on or off, got {other:?}"),
+            };
+            email::gating::set_enabled(ctx, enabled).await?;
+            Ok(json!({ "enabled": enabled }))
+        }
+        ("release", [id]) => {
+            let contact_id = deltachat::contact::ContactId::new(
+                id.parse()
+                    .with_context(|| format!("bad contact id {id:?}"))?,
+            );
+            let released = email::gating::release(ctx, &[contact_id]).await?;
+            // Zero is the expected answer for a contact who is still a
+            // stranger: releasing is a consequence of trust, not a way to get it.
+            Ok(json!({ "released": released }))
+        }
+
+        ("trash", [id]) => {
+            email::ephemeral::trash(ctx, &[msg_id(id)?]).await?;
+            Ok(json!({
+                "trashed": id,
+                "purgeDays": email::ephemeral::purge_days(ctx).await?,
+            }))
+        }
+        ("restore", [id]) => {
+            email::ephemeral::restore(ctx, &[msg_id(id)?]).await?;
+            Ok(json!({ "restored": id }))
+        }
+        ("ephemeral", ["get", id]) => {
+            let id = msg_id(id)?;
+            Ok(json!({
+                "msgId": id.to_u32(),
+                "expiresAt": email::ephemeral::message_expires_at(ctx, id).await?,
+                "trashed": email::ephemeral::trashed(ctx, id).await?.map(|t| json!({
+                    "trashedAt": t.trashed_at,
+                    "purgeAt": t.purge_at,
+                    "reason": format!("{:?}", t.reason),
+                })),
+            }))
+        }
+        ("ephemeral", ["set", id, secs]) => {
+            let id = msg_id(id)?;
+            let secs: u32 = secs
+                .parse()
+                .with_context(|| format!("bad seconds {secs:?}"))?;
+            let timer = match std::num::NonZero::new(secs) {
+                Some(duration) => deltachat::ephemeral::Timer::Enabled { duration },
+                None => deltachat::ephemeral::Timer::Disabled,
+            };
+            email::ephemeral::set_message_timer(ctx, id, timer).await?;
+            Ok(json!({
+                "msgId": id.to_u32(),
+                "expiresAt": email::ephemeral::message_expires_at(ctx, id).await?,
+            }))
+        }
+
         _ => bail!("unknown command {command:?}\n\n{USAGE}"),
     }
 }
@@ -267,6 +384,8 @@ async fn show(ctx: &Context, msg_id: MsgId) -> Result<Value> {
     let labels = email::labels::of_msg(ctx, msg_id).await?;
     let crypto = email::policy::message_crypto(ctx, msg_id).await?;
     let undelivered = email::policy::undelivered(ctx, msg_id).await?;
+    let tags = email::tags::of_msg(ctx, msg_id).await?;
+    let trashed = email::ephemeral::trashed(ctx, msg_id).await?;
 
     Ok(json!({
         "msgId": msg_id.to_u32(),
@@ -278,7 +397,16 @@ async fn show(ctx: &Context, msg_id: MsgId) -> Result<Value> {
             "name": r.name,
         })).collect::<Vec<_>>(),
         "labels": labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
+        "tags": tags.system.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
         "archived": email::labels::is_archived(ctx, msg_id).await?,
+        // Present only for a message in the trash. `reason` is what tells the
+        // difference between "this expired" and "you deleted this".
+        "trashed": trashed.map(|t| json!({
+            "trashedAt": t.trashed_at,
+            "purgeAt": t.purge_at,
+            "reason": format!("{:?}", t.reason),
+        })),
+        "expiresAt": email::ephemeral::message_expires_at(ctx, msg_id).await?,
         "crypto": {
             "encrypted": crypto.encrypted,
             "signed": crypto.signed,

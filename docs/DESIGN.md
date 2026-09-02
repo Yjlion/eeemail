@@ -21,9 +21,13 @@ The remaining gap is genuinely only the **email-client layer**, and that is what
 | Storage | Local DB is canonical; decrypted content never returns to the server |
 | Raw MIME | Retained for a **configurable** period (short by default, up to indefinite) |
 | IMAP | Single folder, transport only. No folder tree. |
-| Organization | **Labels/tags + archive**, local-only, synced across the user's devices |
+| Organization | **Tags + archive**, local-only, synced across the user's devices. System tags derived where core already owns the state ([0017](adr/0017-system-tags.md)) |
 | Encryption | **Opportunistic by default** (original Delta Chat behavior), user-settable stricter (E2E-only) or more lenient |
-| Ephemeral + read receipts | **On by default**, globally disableable, with per-contact overrides |
+| Read receipts | **On by default**, globally disableable, with per-contact overrides |
+| Ephemeral | **Off by default** — the user's choice to make. Expiry is recoverable: a configurable window (30 days) in Trash, then purge ([0019](adr/0019-recoverable-ephemeral-expiry.md)) |
+| Inbox gating | **On by default** for eeemail accounts, applied at setup. Unverified, unknown senders wait in Holding for 30 days ([0018](adr/0018-contact-gating.md)) |
+| At-rest | Database encryption plus **opt-in** per-blob encryption, off by default ([0020](adr/0020-blobdir-encryption.md)) |
+| Structured email | Parse [SML](https://structured.email/) for everyone; act on it only for trusted senders ([0016](adr/0016-structured-email.md)) |
 | First client | Desktop: Tauri v2 + web frontend |
 | Server | Ship a Postfix/Dovecot template adapted from chatmail relay's config, with **traditional `user@domain` accounts** |
 | Excluded | Relay create-on-login/random-address provisioning, decentralized groups & channels, verified groups, webxdc, iroh peer channels |
@@ -74,7 +78,15 @@ Verified against current `chatmail/core` `main`:
 
 8. **Ephemeral + MDN policy layer.** Both on by default with per-contact overrides; read receipts enabled for verified contacts in the address book.
 
-9. **The email UI itself.** Message list, threaded reading pane, composer with subject/CC/BCC/attachments, label sidebar, search, contact management with verification badges.
+9. **The email UI itself.** Message list, threaded reading pane, composer with subject/CC/BCC/attachments, tag sidebar, search, contact management with verification badges.
+
+10. **A mailbox that organizes itself.** Most people do not want to file mail. Inbox, Sent, Drafts, Archive, Trash and Holding are system tags that exist without setup — derived from message state where core already owns it, stored only where they carry a deadline. User tags sit on top. See [ADR 0017](adr/0017-system-tags.md).
+
+11. **Contact gating.** Mail from a sender who is neither verified nor known does not reach the inbox; it waits in Holding for 30 days and is then discarded. Core's contact-request machinery (`Blocked::Request`) is the substrate. See [ADR 0018](adr/0018-contact-gating.md).
+
+12. **Structured email.** Parse [SML](https://structured.email/) `application/ld+json` parts, and the Schema.org-for-Email `<script>` block deployed senders actually emit. Act on it only for trusted senders. See [ADR 0016](adr/0016-structured-email.md).
+
+13. **At-rest encryption that covers the mail.** Database encryption alone leaves attachments and retained originals in cleartext in the blobdir. Per-blob AEAD under the database key closes it, opt-in. See [ADR 0020](adr/0020-blobdir-encryption.md).
 
 ---
 
@@ -87,17 +99,30 @@ eeemail/
 │       ├── email/        # NEW — our email-client layer, isolated for merge sanity
 │       │   ├── rawmime.rs    # raw MIME blob store + retention/expiry
 │       │   ├── recipients.rs # To/CC/BCC sets decoupled from chat membership
-│       │   ├── threading.rs  # JWZ threading over References/In-Reply-To
-│       │   ├── labels.rs     # labels/tags + archive
-│       │   └── policy.rs     # encryption strictness, retention, MDN/ephemeral defaults
+│       │   ├── compose.rs    # addressing a message to a recipient set
+│       │   ├── threading.rs  # threading over References/In-Reply-To
+│       │   ├── labels.rs     # tags + archive, synced by name
+│       │   ├── tags.rs       # system tags, derived and stored (ADR 0017)
+│       │   ├── gating.rs     # holding view for unverified senders (ADR 0018)
+│       │   ├── ephemeral.rs  # recoverable expiry into Trash (ADR 0019)
+│       │   ├── structured.rs # SML / Schema.org-for-Email (ADR 0016)
+│       │   ├── search.rs     # search over body, subject, recipients, tags
+│       │   ├── policy.rs     # encryption strictness, server retention
+│       │   ├── receipts.rs   # MDN policy, ephemeral defaults
+│       │   ├── blobcrypt.rs  # per-blob AEAD (ADR 0020)
+│       │   ├── vault.rs      # at-rest reporting, passphrase
+│       │   └── backup.rs     # encrypted export, staleness
 │       └── ...           # upstream modules, minimally patched
-├── rpc/                  # extends deltachat-jsonrpc with the email methods
 ├── cli/                  # headless driver for dev + integration tests
 ├── desktop/              # Tauri v2 shell + TypeScript frontend
-└── server/               # Postfix/Dovecot deployment template (see below)
-    ├── deploy/           #   adapted from chatmail/relay cmdeploy
-    └── compose/          #   docker-compose variant used by CI
+├── screenshots/          # regenerated from demo fixtures, never a real mailbox
+└── server/               # Postfix/Dovecot template
+    └── compose/          #   docker-compose test server (deploy/ deferred)
 ```
+
+The email methods extend `core/deltachat-jsonrpc` in place rather than living in
+a separate `rpc/` crate: they need `Context` internals, and a second crate would
+have meant re-exporting most of core to reach them.
 
 **Fork discipline — this is what determines whether the fork stays maintainable.** Keep `chatmail/core` as a git remote and merge periodically, forking from tagged releases rather than `main`. Concentrate every addition in `core/src/email/` and touch upstream files as narrowly as possible (ideally single call-sites and hook points). Record each upstream-file patch in [`fork-patches.md`](fork-patches.md) with its rationale, so a merge conflict can be resolved by someone who wasn't there — `scripts/check-fork-patches.sh` fails CI if you don't.
 
@@ -105,17 +130,54 @@ eeemail/
 
 ### Storage additions
 
+As built, by migration:
+
 ```sql
-raw_mime(msg_id, blob_hash, size, received_at, expires_at)  -- NULL expires_at = keep forever
-msg_recipients(msg_id, addr, kind)                          -- kind: to | cc | bcc
+-- 164
+raw_mime(msg_id, blobname, size, stored_at, expires_at)   -- NULL expires_at = keep forever
+-- 165
+msg_recipients(msg_id, addr, name, kind, idx)             -- kind: to | cc | bcc
 threads(id, root_rfc724_mid, subject_norm, last_activity)
 msg_threads(msg_id, thread_id)
-labels(id, name, color, is_system)                          -- Inbox/Archive/Sent/Drafts/Trash + user labels
+thread_refs(thread_id, rfc724_mid)
+-- 166
+labels(id, name, name_norm, color, system)
 msg_labels(msg_id, label_id)
+pending_msg_labels(rfc724_mid, name, applied, timestamp)  -- label arrived before its message
+-- 167
 contact_policy(contact_id, mdn_enabled, ephemeral_secs, encryption_mode)
+server_retention(msg_id, delete_at)
+msg_undelivered(msg_id, addr)                             -- dropped for want of a key
+-- 169 (Phase 11)
+held_msgs(msg_id, held_at, purge_at)                      -- ADR 0018
+trashed_msgs(msg_id, trashed_at, purge_at, reason)        -- ADR 0019
+-- 170 (Phase 14)
+structured_data(msg_id, json, trusted)                    -- ADR 0016
 ```
 
-Labels rather than folders means `msg_labels` is many-to-many by construction, and archive is just the removal of the Inbox label — which fits a threaded conversation view better than a tree would.
+Tags rather than folders means `msg_labels` is many-to-many by construction: a
+thread whose messages carry different tags is representable, where "which folder
+is this thread in?" has no good answer.
+
+**Not every system tag is a row.** `Inbox`, `Sent` and `Drafts` are derived from
+`MessageState`, direction and the absence of a stored system tag, because core
+already owns that state and storing it would create a second source of truth.
+`Archive`, `Trash` and `Holding` are rows, because each is either a user action
+that must survive a failed hook or carries a purge deadline. See
+[ADR 0017](adr/0017-system-tags.md).
+
+### Structured email
+
+A message may carry a machine-readable version of itself: an
+`application/ld+json` part marked `Content-Purpose: Machine-readable`, or —
+much more commonly today — a `<script type="application/ld+json">` block in the
+HTML body. eeemail parses both and stores the result with a `trusted` flag
+computed at receive from the message's encryption state and its gating verdict.
+
+Trusted data can drive affordances; untrusted data renders as inert labelled
+fields with nothing clickable. That is the same trust question the client
+already answers for the inbox, reused rather than reinvented. See
+[ADR 0016](adr/0016-structured-email.md).
 
 ---
 
@@ -250,6 +312,37 @@ Every Cc/Bcc address resolves to a `ContactId`, which is what makes "do we have 
 *Gate met:* 11 tests in `email::compose::compose_tests`. Full suite 1289/1289.
 
 Three real bugs surfaced and were fixed: extra recipients merged inside the encryption branch dropped every Cc from unencrypted mail; `record_undelivered` only compared the `To` header, so a copied recipient dropped for want of a key was invisible; and the send path rebuilt `msg_recipients` from the `To` header, erasing the composer's Cc and Bcc.
+
+**Phase 10 — Design for the client half.** *(docs only)*
+`README.md` brought up to date with a plain statement of how the code was written and what has not been audited. Five ADRs: [0016](adr/0016-structured-email.md) structured email, [0017](adr/0017-system-tags.md) system tags, [0018](adr/0018-contact-gating.md) contact gating, [0019](adr/0019-recoverable-ephemeral-expiry.md) recoverable ephemeral expiry, [0020](adr/0020-blobdir-encryption.md) blobdir encryption.
+
+Two of those reverse earlier decisions, and both reversals are the same shape: **the earlier decision was right about the risk and wrong about the only way to avoid it.** Ephemeral shipped off because expiry was irreversible ([0011](adr/0011-receipts-and-ephemeral.md)); with a recoverable window it need not be. Blobdir encryption was left unbuilt because a partial version would create a false belief ([0015](adr/0015-at-rest-and-backup.md)); migrating existing blobs on enable is what makes it not partial.
+
+`server/deploy/` is recorded as **deliberately not built**: `compose/` covers testing application functionality, and DKIM/ACME/MTA-STS/DNS need a real domain. Configuration nobody has run is worse than none, because it looks like a deployment path.
+
+**Phase 11 — System tags, gating, recoverable ephemeral.** *(engine)*
+`core/src/email/tags.rs`, `gating.rs` and `ephemeral.rs`, migration 169. `Trash` and `Holding` join `Archive` as reserved rows; `Inbox`, `Sent` and `Drafts` are derived. One resolver returns a message's whole tag set so a caller asks once. Gating hooks into the receive site Phases 1–3 already patched, so it costs no new upstream patch. `SearchQuery` takes a `tag` filter, replacing the `archived: Option<bool>` special case, so every list view is one query.
+
+Ephemeral expiry needs **one narrow patch to upstream's `delete_expired_messages`**, which diverts a first-time expiry into `Trash` with a purge deadline and leaves everything else alone. Recorded in [`fork-patches.md`](fork-patches.md).
+
+**Phase 12 — Desktop MVP.** *(UI)*
+Composer with To/Cc/Bcc and attachments, account setup, contacts with verification badges and per-contact policy, QR display and scan. Almost entirely UI: `add_transport`, `get_contacts`, `check_qr`, `get_chat_securejoin_qr_code`, `create_qr_svg` and `secure_join` are already exposed, and Phase 9 landed the recipient set. One new RPC, `send_email`, does chat resolution → draft → recipients → send in the engine rather than making the UI orchestrate four calls and get the Bcc ordering wrong.
+
+The message list stops issuing two RPCs per row. Demo fixtures land here, which is what makes the UI developable without a live account — and screenshottable.
+
+**Phase 13 — At-rest encryption.** *(engine + UI)*
+`core/src/email/blobcrypt.rs`: XChaCha20-Poly1305 per blob, applied at the `BlobObject` boundary. Opt-in, off by default, existing blobs migrated on enable and back on disable, resumably. See [ADR 0020](adr/0020-blobdir-encryption.md).
+
+**The key is stored in the database, not derived from the passphrase**, which is a correction to the ADR made by implementation. Core does not keep the passphrase after opening the database — SQLCipher holds it inside the connection — so deriving from it would have meant patching upstream to hold a secret in memory all session for no gain. A random key inside a database SQLCipher already encrypts gives the same one-secret property, and a passphrase change then rewrites nothing in the blobdir. It also makes the dangerous case impossible: blob encryption without a database passphrase is refused, because the key would be sitting in cleartext.
+
+Two properties are load-bearing and each has a test guarding it. **Dedup hashes plaintext** — `blob.rs` encrypts *after* the rename, because hashing ciphertext with a random nonce would give every copy of a message a different name and silently double the blobdir. And **reads are transparent**: an `EEEBLOB1` magic prefix means a file without it is returned untouched, which is what let all twelve read sites in core become unconditional one-line redirections, and what makes a part-migrated blobdir read correctly.
+
+**`vault::set_passphrase` could not encrypt anything.** It was a thin wrapper over `PRAGMA rekey`, and SQLCipher's rekey only works on a database that is *already* encrypted — so the one operation a user actually wants, *encrypt my existing mailbox*, was precisely the one that failed. Nothing caught it in Phase 8 because nothing called it. It now crosses between plaintext and encrypted with `sqlcipher_export()`, building a complete copy under the new key and renaming it over the original only once it is finished, so an interruption leaves the mailbox as it was.
+
+`vault::protection` stops hardcoding `blobs_encrypted: false` and now *measures* the blobdir, so an interrupted migration reports `partial` rather than a half-truth. `vault::set_passphrase` had existed since Phase 8 reachable from nothing — no RPC, no UI; it lands here with a settings panel showing `protection().summary()` verbatim. OS keyring is deferred behind that RPC boundary.
+
+**Phase 14 — Screenshots and structured email.** *(UI + engine)*
+`screenshots/`, regenerated by a script from Phase 12's demo fixtures through headless Chromium — deterministic, reproducible in CI, and never a photograph of a real mailbox. `core/src/email/structured.rs`, migration 170, implements [ADR 0016](adr/0016-structured-email.md): all three SML multipart arrangements plus the HTML `<script>` fallback, stored with a trust verdict, rendered as a card for trusted senders and as inert fields for everyone else.
 
 ---
 

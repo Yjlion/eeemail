@@ -8,7 +8,9 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:demo": "tsc --noEmit && VITE_EEEMAIL_DEMO=1 vite build --outDir dist-demo",
+    "preview:demo": "vite preview --outDir dist-demo --port 5174 --strictPort"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.1",

@@ -22,9 +22,10 @@ use rusqlite::types::Value;
 
 use crate::chat::ChatId;
 use crate::context::Context;
-use crate::message::MsgId;
+use crate::message::{MessageState, MsgId};
 
 use super::labels::LabelId;
+use super::tags::SystemTag;
 
 /// What to search for. An empty [`SearchQuery`] matches nothing, not
 /// everything, so an empty search box does not return the mailbox.
@@ -37,9 +38,13 @@ pub struct SearchQuery {
     /// Restrict to messages carrying this label.
     pub label: Option<LabelId>,
 
-    /// `Some(true)` for archived only, `Some(false)` for the inbox, `None` for
-    /// both.
-    pub archived: Option<bool>,
+    /// Restrict to one system tag: the inbox, the holding view, sent, drafts,
+    /// the archive or the trash.
+    ///
+    /// Replaced an `archived: Option<bool>` flag, which could express only two
+    /// of the six views and left the other four to be assembled by whoever was
+    /// building a list. See `docs/adr/0017-system-tags.md`.
+    pub tag: Option<SystemTag>,
 
     /// Restrict to one conversation.
     pub chat_id: Option<ChatId>,
@@ -60,16 +65,16 @@ impl SearchQuery {
         self
     }
 
-    /// Restricts the search to archived or unarchived messages.
-    pub fn with_archived(mut self, archived: bool) -> Self {
-        self.archived = Some(archived);
+    /// Restricts the search to one system tag.
+    pub fn with_tag(mut self, tag: SystemTag) -> Self {
+        self.tag = Some(tag);
         self
     }
 
     fn is_empty(&self) -> bool {
         self.text.trim().is_empty()
             && self.label.is_none()
-            && self.archived.is_none()
+            && self.tag.is_none()
             && self.chat_id.is_none()
     }
 }
@@ -84,12 +89,18 @@ pub async fn search(context: &Context, query: &SearchQuery) -> Result<Vec<MsgId>
         return Ok(Vec::new());
     }
 
-    let mut sql = String::from(
+    // Drafts are stored `hidden=1` so that core keeps them out of their chat's
+    // message list. Searching within Drafts therefore has to look at hidden
+    // rows, and every other search must not.
+    let hidden = match query.tag {
+        Some(SystemTag::Drafts) => "",
+        _ => " AND m.hidden=0",
+    };
+    let mut sql = format!(
         "SELECT m.id FROM msgs m
          LEFT JOIN contacts ct ON m.from_id=ct.id
          LEFT JOIN chats c ON m.chat_id=c.id
-         WHERE m.chat_id>9
-           AND m.hidden=0
+         WHERE m.chat_id>9{hidden}
            AND IFNULL(c.blocked, 0)!=1
            AND IFNULL(ct.blocked, 0)=0",
     );
@@ -121,15 +132,38 @@ pub async fn search(context: &Context, query: &SearchQuery) -> Result<Vec<MsgId>
         params.push(Value::Integer(label.to_i64()));
     }
 
-    if let Some(archived) = query.archived {
-        sql.push_str(if archived {
-            " AND EXISTS (SELECT 1 FROM msg_labels ml JOIN labels l ON l.id=ml.label_id
-                          WHERE ml.msg_id=m.id AND l.name_norm=?)"
-        } else {
-            " AND NOT EXISTS (SELECT 1 FROM msg_labels ml JOIN labels l ON l.id=ml.label_id
-                              WHERE ml.msg_id=m.id AND l.name_norm=?)"
-        });
-        params.push(Value::Text(super::labels::ARCHIVE.to_lowercase()));
+    if let Some(tag) = query.tag {
+        match tag.stored_name() {
+            // A stored tag is exactly its reserved label.
+            Some(name) => {
+                sql.push_str(
+                    " AND EXISTS (SELECT 1 FROM msg_labels ml JOIN labels l ON l.id=ml.label_id
+                                  WHERE ml.msg_id=m.id AND l.name_norm=?)",
+                );
+                params.push(Value::Text(name.to_lowercase()));
+            }
+            // A derived tag is a state range, plus -- for the inbox -- the
+            // absence of any stored system tag. Written as "no system label"
+            // rather than as a list of them, so a system tag added later cannot
+            // forget to remove its mail from the inbox.
+            None => {
+                let (lo, hi) = match tag {
+                    SystemTag::Drafts => (MessageState::OutDraft, MessageState::OutDraft),
+                    SystemTag::Sent => (MessageState::OutPending, MessageState::OutMdnRcvd),
+                    SystemTag::Inbox => (MessageState::InFresh, MessageState::InSeen),
+                    _ => unreachable!("stored above"),
+                };
+                sql.push_str(" AND m.state>=? AND m.state<=?");
+                params.push(Value::Integer(lo as i64));
+                params.push(Value::Integer(hi as i64));
+                if tag == SystemTag::Inbox {
+                    sql.push_str(
+                        " AND NOT EXISTS (SELECT 1 FROM msg_labels ml JOIN labels l ON l.id=ml.label_id
+                                          WHERE ml.msg_id=m.id AND l.system=1)",
+                    );
+                }
+            }
+        }
     }
 
     if let Some(chat_id) = query.chat_id {

@@ -224,6 +224,15 @@ impl ContactId {
                 Ok(())
             })
             .await?;
+        // eeemail: becoming known is one of the two ways a sender's mail leaves
+        // the holding view. `release` re-checks each contact, because origin is
+        // scaled up constantly and most scale-ups do not cross the threshold.
+        // See docs/adr/0018-contact-gating.md.
+        crate::email::gating::release(context, ids)
+            .await
+            .context("failed to release held mail")
+            .log_err(context)
+            .ok();
         Ok(())
     }
 
@@ -287,7 +296,8 @@ pub async fn make_vcard(context: &Context, contacts: &[ContactId]) -> Result<Str
         let key = c.public_key(context).await?.map(|k| k.to_base64());
         let profile_image = match c.get_profile_image_ext(context, false).await? {
             None => None,
-            Some(path) => tokio::fs::read(path)
+            // eeemail: transparent; see email::blobcrypt.
+            Some(path) => crate::email::blobcrypt::read(context, &path)
                 .await
                 .log_err(context)
                 .ok()
@@ -2059,6 +2069,13 @@ pub(crate) async fn mark_contact_id_as_verified(
             Ok(())
         })
         .await?;
+    // eeemail: verification is the other way a sender's mail leaves the holding
+    // view. See docs/adr/0018-contact-gating.md.
+    crate::email::gating::release(context, &[contact_id])
+        .await
+        .context("failed to release held mail")
+        .log_err(context)
+        .ok();
     Ok(())
 }
 
