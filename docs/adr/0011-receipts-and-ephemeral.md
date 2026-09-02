@@ -1,6 +1,6 @@
 # 0011 — Read receipts get a verified-only middle setting; ephemeral ships off
 
-**Status:** Accepted — 2026-08-31
+**Status:** Accepted — 2026-08-31 · Ephemeral half superseded by [0019](0019-recoverable-ephemeral-expiry.md); read receipts unchanged
 
 ## Context
 

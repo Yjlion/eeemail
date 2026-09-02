@@ -1,6 +1,6 @@
 # 0005 — Organize with labels/tags + archive, not a folder tree
 
-**Status:** Accepted — 2026-08-31 · One consequence amended by [0009](0009-labels-and-search.md)
+**Status:** Accepted — 2026-08-31 · One consequence amended by [0009](0009-labels-and-search.md) · System-label model settled by [0017](0017-system-tags.md)
 
 ## Context
 

@@ -1,6 +1,6 @@
 # 0007 — Ship a chatmail-derived Postfix/Dovecot template with traditional accounts
 
-**Status:** Accepted — 2026-08-31
+**Status:** Accepted — 2026-08-31 · `deploy/` deferred 2026-09-01; only `compose/` is built. See [README](README.md#deferred)
 
 ## Context
 
