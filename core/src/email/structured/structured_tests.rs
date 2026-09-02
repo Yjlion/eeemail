@@ -3,7 +3,6 @@
 use anyhow::Result;
 
 use super::*;
-use crate::config::Config;
 use crate::receive_imf::receive_imf;
 use crate::test_utils::{TestContext, TestContextManager};
 
