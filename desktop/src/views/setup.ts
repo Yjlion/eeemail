@@ -1,12 +1,13 @@
 /**
  * First-run account setup.
  *
- * `add_transport` and `apply_eeemail_defaults` are called from the *same*
- * function, deliberately. eeemail's defaults are applied at setup rather than
- * as compile-time defaults ([ADR 0012]), so an account configured without that
- * second call is silently left on upstream's strict policy -- and the symptom
- * would be "my mail will not send", days later, with nothing pointing back
- * here. Making them one step is what stops that.
+ * `apply_eeemail_defaults` runs *before* `add_transport`, and the order is
+ * load-bearing. eeemail's defaults are applied at setup rather than as
+ * compile-time defaults ([ADR 0012]), and `policy::apply_defaults` refuses to
+ * touch an already-configured account -- so calling it after the transport is
+ * a no-op that silently leaves the account on upstream's strict policy. The
+ * symptom would be "my mail will not send", days later, with nothing pointing
+ * back here.
  *
  * [ADR 0012]: ../../../docs/adr/0012-rpc-and-cli.md
  */
@@ -73,6 +74,13 @@ export function renderSetup(el: HTMLElement): void {
       const accountId =
         state.accountId || ((await rpc.call("add_account")) as number);
 
+      // Before `add_transport`, not after. `add_transport` configures the
+      // account, and `policy::apply_defaults` deliberately never touches a
+      // configured one -- so called second it is a silent no-op, and the
+      // account keeps upstream's policy with gating off and expiry
+      // destructive. Guarded by step 1 of `scripts/e2e-pass.py`.
+      await rpc.call("apply_eeemail_defaults", [accountId]);
+
       const certs = (form.elements.namedItem("acceptInvalidCerts") as HTMLInputElement)
         .checked
         ? "acceptInvalidCertificates"
@@ -95,8 +103,6 @@ export function renderSetup(el: HTMLElement): void {
         },
       ]);
 
-      // Same function as the call above, on purpose. See the module docs.
-      await rpc.call("apply_eeemail_defaults", [accountId]);
       await rpc.call("start_io", [accountId]);
 
       state.accountId = accountId;

@@ -169,3 +169,14 @@ body.demo .sidebar .brand::after {
 .inline-form { display: flex; gap: 8px; align-items: flex-end; }
 .inline-form label { flex: 1; margin-bottom: 0; }
 .inline-form button { font: inherit; padding: 7px 12px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+
+/* --- structured email (ADR 0016) -------------------------------------- */
+
+/* Trusted data gets a card; untrusted gets the same rows with no frame, under
+   a notice. Neither carries a control, so neither needs an affordance style. */
+.reading .card { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--bg-alt); }
+.reading .sd-type { font-weight: 600; font-size: 13px; margin-bottom: 8px; }
+.reading .sd-inert { padding: 2px 2px 0; }
+.reading .sd-row { display: flex; gap: 12px; font-size: 13px; padding: 3px 0; align-items: baseline; }
+.reading .sd-key { color: var(--text-dim); min-width: 140px; flex: 0 0 auto; }
+.reading .sd-value { overflow-wrap: anywhere; }

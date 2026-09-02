@@ -152,7 +152,7 @@ msg_undelivered(msg_id, addr)                             -- dropped for want of
 held_msgs(msg_id, held_at, purge_at)                      -- ADR 0018
 trashed_msgs(msg_id, trashed_at, purge_at, reason)        -- ADR 0019
 -- 170 (Phase 14)
-structured_data(msg_id, json, trusted)                    -- ADR 0016
+structured_data(msg_id, seq, json, trusted, source)       -- ADR 0016
 ```
 
 Tags rather than folders means `msg_labels` is many-to-many by construction: a
@@ -267,7 +267,7 @@ Two decisions worth knowing. **Archive is the presence of a reserved label, not 
 
 **Read receipts are on by default already**; what was missing was *who*. The verified-only setting is what makes "if a contact is verified and in the address book, they get read receipts" expressible as a policy. A global off is a **hard off**, beating the policy and every override — the reverse would be a privacy regression.
 
-**Ephemeral machinery is complete but ships disabled**, which is a deliberate departure from "on by default" that should be reviewed. Ephemeral deletion removes the local copy, and the local store is the only durable copy of the mailbox ([ADR 0004](adr/0004-local-store-and-raw-mime.md)), so a non-zero default silently destroys mail. No duration was specified. Turning it on is one config value and every test covers the on case.
+**Ephemeral machinery shipped disabled here and was turned on in Phase 11.** The blocker was that ephemeral deletion removed the local copy, and the local store is the only durable copy of the mailbox ([ADR 0004](adr/0004-local-store-and-raw-mime.md)), so a non-zero default silently destroyed mail. [ADR 0019](adr/0019-recoverable-ephemeral-expiry.md) made expiry recoverable — a fired timer moves the message to `Trash` and leaves it readable — which is what made a default safe to set. `policy::apply_defaults` now writes `EphemeralTrashDays = 30` at setup.
 
 *Gate met:* 21 tests in `email::receipts::receipts_tests`. Full suite 1264/1264.
 
@@ -280,7 +280,7 @@ Threads come back **flat** — `(msgId, parentMsgId, depth)` in display order �
 
 *Gate met:* full suite 1267/1267; TypeScript bindings generate; the CLI exercised end-to-end against a real account.
 
-**Phase 7 — Desktop UI.** *(reading client complete; composer and setup outstanding)*
+**Phase 7 — Desktop UI.** *(complete)*
 `desktop/`: a Tauri v2 shell over the RPC surface, plus a TypeScript frontend. Message list, threaded reading pane, label sidebar, search, and per-message encryption/verification/undelivered/source state. See [ADR 0013](adr/0013-desktop-ui.md).
 
 **The shell is one JSON-RPC pipe, not a Tauri command per method.** The RPC surface is a couple of hundred methods and grows every phase; mirroring each would mean writing every signature three times. Requests go in through `rpc_send`, and everything coming back — responses *and* engine events — is emitted as one `rpc-message` stream, the same shape `deltachat-rpc-server` has over stdio.
@@ -289,7 +289,7 @@ Threads come back **flat** — `(msgId, parentMsgId, depth)` in display order �
 
 *Gate met:* frontend typechecks and builds; the Rust shell compiles clean under `-Dwarnings`; the app launches under Xvfb, opens the account store and enters its event loop.
 
-*Outstanding:* the composer, account setup, contact management with verification badges, and QR display/scan. The composer in particular is blocked on the same thing Phases 2 and 4 deferred — `MimeFactory` emits no `Cc` header and derives addressing from chat membership — so building a To/Cc/Bcc composer before that lands would produce a form whose fields the engine ignores.
+*Delivered by Phase 12:* the composer, account setup, contact management with verification badges, and QR display/scan. The composer was blocked on the same thing Phases 2 and 4 deferred — `MimeFactory` emits no `Cc` header and derives addressing from chat membership — which [Phase 9](#phase-9) closed first, so the fields the form offers are ones the engine acts on.
 
 **Phase 8 — At-rest protection, backup, calls.** *(engine complete)*
 `core/src/email/vault.rs` + `core/src/email/backup.rs`. See [ADR 0015](adr/0015-at-rest-and-backup.md).
@@ -302,7 +302,7 @@ Threads come back **flat** — `(msgId, parentMsgId, depth)` in display order �
 
 *Gate met:* 11 tests in `email::vault` and `email::backup`, including a full backup round trip and a wrong-passphrase refusal.
 
-*Not implemented:* cloud upload (needs credentials, a provider API and a per-provider threat model — none buildable honestly without picking one), blobdir encryption, and STUN-based direct device sync.
+*Not implemented:* cloud upload (needs credentials, a provider API and a per-provider threat model — none buildable honestly without picking one) and STUN-based direct device sync. Blobdir encryption was deferred here and landed in Phase 13.
 
 **Phase 9 — Recipient sets on the wire.** *(complete)*
 `core/src/email/compose.rs`. Closes the gap Phases 2, 4 and 7 each deferred: core derives the `To` header, the envelope *and* the key set from chat membership, and emits no `Cc` at all. A message now carries extra recipients of its own. See [ADR 0014](adr/0014-recipient-sets-on-the-wire.md).
@@ -341,14 +341,17 @@ Two properties are load-bearing and each has a test guarding it. **Dedup hashes 
 
 `vault::protection` stops hardcoding `blobs_encrypted: false` and now *measures* the blobdir, so an interrupted migration reports `partial` rather than a half-truth. `vault::set_passphrase` had existed since Phase 8 reachable from nothing — no RPC, no UI; it lands here with a settings panel showing `protection().summary()` verbatim. OS keyring is deferred behind that RPC boundary.
 
-**Phase 14 — Screenshots and structured email.** *(UI + engine)*
-`screenshots/`, regenerated by a script from Phase 12's demo fixtures through headless Chromium — deterministic, reproducible in CI, and never a photograph of a real mailbox. `core/src/email/structured.rs`, migration 170, implements [ADR 0016](adr/0016-structured-email.md): all three SML multipart arrangements plus the HTML `<script>` fallback, stored with a trust verdict, rendered as a card for trusted senders and as inert fields for everyone else.
+**Phase 14a — Screenshots.** *(complete)*
+`screenshots/`, regenerated by a script from Phase 12's demo fixtures through headless Chromium — deterministic, reproducible in CI, and never a photograph of a real mailbox.
+
+**Phase 14b — Structured email.** *(complete)*
+`core/src/email/structured.rs`, migration 170, implements [ADR 0016](adr/0016-structured-email.md): all three SML multipart arrangements plus the HTML `<script>` fallback, stored with a trust verdict, rendered as a card for trusted senders and as inert fields for everyone else.
 
 ---
 
 ## Verification
 
-**Per phase.** Unit tests in-crate; upstream's existing test suite must stay green after every merge. Integration tests run against `server/compose` — our own Postfix + Dovecot template — driven through `cli/`. `cargo clippy -- -D warnings` and `cargo fmt --check` in CI. Additionally test against at least one mainstream provider (Gmail or Fastmail) so we never quietly become dependent on our own server's quirks.
+**Per phase.** Unit tests in-crate; upstream's existing test suite must stay green after every merge. Integration tests run against `server/compose` — our own Postfix + Dovecot template — driven through `scripts/e2e-pass.py`, which speaks JSON-RPC to `deltachat-rpc-server`. Not through `cli/`: the CLI is one-shot with no daemon, so it never starts core's IO loop and can neither send nor receive. `cargo clippy -- -D warnings` and `cargo fmt --check` in CI. Additionally test against at least one mainstream provider (Gmail or Fastmail) so we never quietly become dependent on our own server's quirks.
 
 **Protocol interop — the tests that actually matter.**
 - **Autocrypt:** exchange mail with Delta Chat and with Thunderbird; keys learned both directions, replies encrypt automatically.
@@ -359,7 +362,16 @@ Two properties are load-bearing and each has a test guarding it. **Dedup hashes 
 - **No plaintext leaves the device:** capture all IMAP APPEND and SMTP traffic during a full sync-and-send cycle and assert no decrypted body or subject appears in it, including in `BccSelf` self-copies.
 - **Retention is honored:** raw MIME past its expiry is gone from the blob store; a message whose server retention has elapsed is gone from the server; and in coexistence mode ("never delete") the server mailbox is byte-for-byte unchanged after a full sync.
 
-**End-to-end.** Phase 2: `cli` sends mail that arrives correctly in Thunderbird. Phase 7: run the Tauri app against a real account and read, compose, label and search through the UI.
+**End-to-end — the six-step pass.** `scripts/e2e-pass.py` against `server/compose`, in this order:
+
+1. **Account setup.** Two accounts configured against real IMAP and SMTP, asserting that eeemail's defaults actually landed — gating on, expiry recoverable at 30 days, encryption opportunistic. `policy::apply_defaults` refuses a configured account, so this also pins the call *before* the transport is added.
+2. **A Cc'd message.** Subject, `To`, `Cc` and one attachment survive the round trip to a third real mailbox. Two accounts cannot tell a dropped `Cc` from a delivered one, which is why the server provisions `carol`.
+3. **Held mail reaches the inbox.** A stranger's mail lands in Holding, stays readable, and moves to the inbox when the sender is accepted. Runs *before* step 3b: writing to someone makes them known, which releases their held mail on its own.
+4. **A timer fires and the message survives it.** Core's own `ephemeral_loop` expires a message into Trash; it stays readable and restores. This is ADR 0019's whole point, so nothing simulates it.
+5. **Encryption at rest.** Blob encryption refuses to run on a cleartext database, then a passphrase and a full blobdir migration are checked through `get_at_rest_protection`.
+6. **Screenshots.** Regenerated from fixtures and byte-stable; touches no server.
+
+Step 3b additionally completes SecureJoin between the two accounts and asserts the resulting mail is encrypted and verified. That exercises the code but is **not** interop: both sides are the same core. Interop against Thunderbird, Gmail and a real Delta Chat client (issue #5) remains open.
 
 ---
 

@@ -3,6 +3,7 @@
 use anyhow::Result;
 
 use super::*;
+use crate::config::Config;
 use crate::email::policy::{EncryptionMode, undelivered};
 use crate::email::recipients::{RecipientKind, load_kind};
 use crate::message::{Message, Viewtype};
@@ -57,6 +58,51 @@ async fn envelope(t: &TestContext) -> Result<String> {
         .query_get_value("SELECT recipients FROM smtp LIMIT 1", ())
         .await?
         .unwrap_or_default())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_a_verified_contact_gets_an_encrypted_chat() -> Result<()> {
+    let mut tcm = TestContextManager::new();
+    let alice = tcm.alice().await;
+    let bob = tcm.bob().await;
+    // Gives alice a *key*-contact for bob, which is what an encrypted incoming
+    // message or a QR verification produces. The same address also has an
+    // address-contact, and picking the wrong one is the whole bug.
+    tcm.send_recv_accept(&bob, &alice, "hi").await;
+    let bob_addr = bob.get_config(Config::Addr).await?.unwrap();
+
+    let msg_id = send(
+        &alice,
+        &RecipientSet {
+            to: vec![bob_addr],
+            ..Default::default()
+        },
+        "Subject",
+        "the body",
+        None,
+    )
+    .await?;
+    let sent = alice.pop_sent_msg().await;
+
+    // `Chat::is_encrypted` keys off the contact row's fingerprint, so a chat
+    // built from the address-contact renders cleartext however many keys we
+    // hold for that person -- including one the user verified by QR.
+    assert!(
+        sent.payload().contains("BEGIN PGP MESSAGE"),
+        "mail to a key-contact went out unencrypted:\n{}",
+        sent.payload()
+    );
+    assert!(
+        !sent.payload().contains("the body"),
+        "the plaintext body is on the wire:\n{}",
+        sent.payload()
+    );
+    let msg = Message::load_from_db(&alice, msg_id).await?;
+    assert!(
+        msg.get_showpadlock(),
+        "the message is encrypted but does not say so"
+    );
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

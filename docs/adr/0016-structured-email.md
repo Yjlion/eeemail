@@ -49,6 +49,22 @@ labelled fields, with no links, no buttons and nothing that initiates a request.
 **Ignore the IMAP keywords.** `$hasStructuredData` and `$MRM` are server-side
 state, and eeemail holds none ([0003](0003-imap-as-transport.md)).
 
+**Amended 2026-09-02, on implementation.** Two things this ADR left open:
+
+- **The predicate is** `gating::is_trusted(sender) && encrypted && signed`.
+  Full SecureJoin verification is deliberately not required: no parcel or
+  booking sender will ever scan a QR code, so requiring it would make the
+  trusted branch dead code. Note what [0021](0021-autocrypt-key-contacts.md)
+  costs here — a signature now proves continuity with a key that may itself
+  have been learned from an unauthenticated header, so the verdict means "the
+  user engaged with this correspondent, and this message is cryptographically
+  the same correspondent", not "this sender is who they claim to be".
+- **No affordance that touches the network ships in Phase 14b.** Trust changes
+  presentation only: a card with the type as a heading, versus flat fields
+  behind a notice. The desktop has no shell-mediated way to open anything, and
+  inventing one inside this phase would ship exactly the phishing primitive
+  this ADR exists to contain. "Track this parcel" waits for that path.
+
 ## Consequences
 
 - The trust rule is the *same* rule as everywhere else in the client, not a

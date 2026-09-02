@@ -54,8 +54,8 @@ use types::contact::{ContactObject, VcardContact};
 use types::email::{
     JsonrpcBackupStatus, JsonrpcEncryptionMode, JsonrpcLabel, JsonrpcMdnPolicy,
     JsonrpcMessageCrypto, JsonrpcMessageRow, JsonrpcProtection, JsonrpcRecipient,
-    JsonrpcRecipientSet, JsonrpcSearchQuery, JsonrpcServerRetention, JsonrpcSystemTag, JsonrpcTags,
-    JsonrpcThreadItem, JsonrpcTrashed, flatten_thread,
+    JsonrpcRecipientSet, JsonrpcSearchQuery, JsonrpcServerRetention, JsonrpcStructuredObject,
+    JsonrpcSystemTag, JsonrpcTags, JsonrpcThreadItem, JsonrpcTrashed, flatten_thread,
 };
 use types::events::Event;
 use types::http::HttpResponse;
@@ -3418,6 +3418,25 @@ impl CommandApi {
         let ctx = self.get_context(account_id).await?;
         email::ephemeral::set_message_timer(&ctx, MsgId::new(msg_id), timer_from_secs(seconds))
             .await
+    }
+
+    /// The machine-readable data a message carried about itself, in order.
+    ///
+    /// Empty for most mail. Each object carries a `trusted` verdict computed at
+    /// receive; a client **must** render untrusted objects inert — as labelled
+    /// fields, with no links, no buttons and nothing that initiates a request.
+    /// See `docs/adr/0016-structured-email.md`.
+    async fn get_structured_data(
+        &self,
+        account_id: u32,
+        msg_id: u32,
+    ) -> Result<Vec<JsonrpcStructuredObject>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::structured::of_msg(&ctx, MsgId::new(msg_id))
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect())
     }
 
     /// Everything a message list needs, for many messages, in one call.

@@ -851,6 +851,14 @@ pub async fn housekeeping(context: &Context) -> Result<()> {
             "Housekeeping: cannot purge trashed messages: {:#}.", err
         );
     }
+    // After both deadlines, so rows belonging to messages they just destroyed
+    // go in the same pass rather than lingering a day.
+    if let Err(err) = crate::email::structured::prune(context).await {
+        warn!(
+            context,
+            "Housekeeping: cannot prune structured data: {:#}.", err
+        );
+    }
 
     if let Err(err) = remove_unused_files(context).await {
         warn!(

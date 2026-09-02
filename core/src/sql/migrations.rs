@@ -2788,6 +2788,33 @@ UPDATE msgs SET state=24 WHERE state=18; -- Change OutPreparing to OutFailed.
         .await?;
     }
 
+    // eeemail: machine-readable structured data carried alongside a message.
+    // docs/adr/0016-structured-email.md
+    inc_and_check(&mut migration_version, 170)?;
+    if dbversion < migration_version {
+        sql.execute_migration(
+            // One row per extracted object. `trusted` is the verdict computed
+            // at receive and is deliberately never recomputed: an affordance
+            // must not appear on old mail because its sender was accepted
+            // later, and must not vanish from mail the user already acted on.
+            "CREATE TABLE structured_data (
+                msg_id INTEGER NOT NULL, -- msgs.id
+                seq INTEGER NOT NULL, -- order within the message
+                json TEXT NOT NULL, -- the object exactly as it arrived
+                trusted INTEGER NOT NULL, -- verdict at receive; see ADR 0016
+                -- Where it came from, which is also what SML says it means:
+                -- 0 multipart/alternative (a full representation of the body),
+                -- 1 multipart/related (partial), 2 multipart/mixed (neither),
+                -- 3 a <script type=\"application/ld+json\"> in the HTML body.
+                source INTEGER NOT NULL,
+                PRIMARY KEY (msg_id, seq)
+            ) STRICT;
+            CREATE INDEX structured_data_index1 ON structured_data (msg_id);",
+            migration_version,
+        )
+        .await?;
+    }
+
     let new_version = sql
         .get_raw_config_int(VERSION_CFG)
         .await?

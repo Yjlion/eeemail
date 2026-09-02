@@ -125,3 +125,21 @@ export type AtRestProtection = {
   partial: boolean;
   summary: string;
 };
+
+/** Where a structured object came from, and so what it claims to represent. */
+export type StructuredSource = "alternative" | "related" | "mixed" | "htmlScript";
+
+/**
+ * Machine-readable data a message carried about itself.
+ *
+ * `trusted` is computed by the engine at receive and is the only thing that
+ * may change how this renders. Untrusted objects are shown inert: labelled
+ * fields, no links, no buttons, nothing that initiates a request.
+ * See `docs/adr/0016-structured-email.md`.
+ */
+export type StructuredObject = {
+  seq: number;
+  json: string;
+  trusted: boolean;
+  source: StructuredSource;
+};

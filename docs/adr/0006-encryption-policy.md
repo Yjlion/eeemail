@@ -23,10 +23,18 @@ original Delta Chat behavior:
 |---|---|
 | **Strict** | E2E only. Refuse to send to recipients without a key; do not process incoming cleartext. Maps onto core's existing `ForceEncryption`. |
 | **Opportunistic** *(default)* | Encrypt whenever a key is known, cleartext otherwise. Unencrypted messages are visually distinct. |
+
 | **Lenient** | Allow cleartext freely, without per-message friction. |
 
 Autocrypt `prefer-encrypt` is set to `mutual`, so peers learn that we want
 encryption and reply encrypted where they can.
+
+**Amended 2026-09-02.** "Whenever a key is known" was unreachable on `v2.59`,
+which decides encryption by contact *type* and mints the right kind of contact
+only from a signed message or SecureJoin. See
+[0021](0021-autocrypt-key-contacts.md), which restores the bootstrap by making a
+key-contact from an incoming `Autocrypt:` header, and states what that key is
+and is not worth.
 
 Per-contact overrides sit on top of the global mode, in
 `contact_policy(contact_id, ..., encryption_mode)`.

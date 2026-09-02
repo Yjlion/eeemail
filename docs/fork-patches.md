@@ -87,8 +87,11 @@ can tell them apart.
 | `core/deltachat-jsonrpc/src/api/types/mod.rs` | `pub mod email;`. | Registers our types. | [0012](adr/0012-rpc-and-cli.md) |
 | `core/src/mimefactory.rs` | Added a `cc` field to `MimeFactory`, a block merging extra Cc/Bcc recipients into the envelope and key set before the encryption branch, a `Cc` header in `render_headers`, and a `cc_header()` accessor. | Core emits no `Cc` at all and derives addressing from chat membership, so a composer had nothing to write to. Placed **before** the encryption branch on purpose: inside it, every Cc was silently dropped from unencrypted mail. | [0014](adr/0014-recipient-sets-on-the-wire.md) |
 
+| `core/src/sql/migrations.rs` | Migration 170: `CREATE TABLE structured_data`. | Machine-readable data a message carried about itself, with the trust verdict computed at receive and never recomputed. | [0016](adr/0016-structured-email.md) |
 | `core/src/sql/migrations.rs` | Migration 169: `CREATE TABLE held_msgs`, `trashed_msgs`, and the reserved `Trash` and `Holding` rows. | Contact gating and the recoverable trash. Both tables hold a **local** purge deadline that is deliberately never synced. | [0017](adr/0017-system-tags.md), [0018](adr/0018-contact-gating.md), [0019](adr/0019-recoverable-ephemeral-expiry.md) |
 | `core/src/config.rs` | Added `Config::InboxGating` and `Config::EphemeralTrashDays`, **both defaulting to upstream's behaviour** (`0`). Rewrote the `EphemeralDefaultSeconds` rationale, which described a destructive expiry that no longer exists. | eeemail turns both on in `email::policy::apply_defaults` instead. Flipping the compile-time defaults broke eight upstream tests that assert a fired timer destroys the message and that a stranger's mail reaches the inbox — the same trade `ForceEncryption` already refused. Upstream test churn: zero. | [0012](adr/0012-rpc-and-cli.md), [0018](adr/0018-contact-gating.md), [0019](adr/0019-recoverable-ephemeral-expiry.md) |
+| `core/src/receive_imf.rs` | One more call, `email::structured::store`, in the existing best-effort block, after `gating::apply`. | Extracts structured data and freezes its trust verdict. After gating so the verdict agrees with where the message landed. Takes `imf_raw` as well as the parser, because `decoded_data` is empty unless something was decrypted. No new patch site. | [0016](adr/0016-structured-email.md) |
+| `core/src/receive_imf.rs` | One more call, `email::autocrypt::adopt`, in the existing best-effort block, *outside* the per-message loop. | Learns the sender's advertised key so the next message to them can be encrypted. Outside the loop because the key belongs to the sender, not to any one of the ids a message produced. No new patch site. | [0021](adr/0021-autocrypt-key-contacts.md) |
 | `core/src/receive_imf.rs` | One more call, `email::gating::apply`, in the existing best-effort block. | Holds mail from a sender who is neither verified nor known. Placed after `drain_pending` so a label synced from another device is already on the message when this classifies it. No new patch site: the block was already there. | [0018](adr/0018-contact-gating.md) |
 | `core/src/contact.rs` | Two `email::gating::release` calls: one after the transaction in `ContactId::scaleup_origin`, one after the transaction in `mark_contact_id_as_verified`. | The two ways a sender becomes trusted, and therefore the two places their held mail must be let out. Best-effort. `release` re-checks each contact rather than trusting the call site, because origin is scaled up constantly and most scale-ups do not cross into trusted -- so if upstream moves these, re-place them at whatever the new choke points are and the behaviour is unchanged. | [0018](adr/0018-contact-gating.md) |
 | `core/src/ephemeral.rs` | One best-effort `email::ephemeral::divert` call at the top of `delete_expired_messages`, before `select_expired_messages`. | Expiry moves a message to `Trash` for a recoverable window instead of destroying it. **The ordering is the patch**: `divert` clears `ephemeral_timestamp` on what it takes, so the select immediately below no longer sees those rows. If upstream restructures this function, the call must stay ahead of the select or expiry becomes destructive again, silently. `delete_device_after` expiries are deliberately left for core to destroy. | [0019](adr/0019-recoverable-ephemeral-expiry.md) |
@@ -146,6 +149,8 @@ intent rather than trying to replay this diff.
 | `core/src/email/policy.rs` | Encryption strictness, per-contact overrides, undelivered recipients, server retention | [0006](adr/0006-encryption-policy.md), [0010](adr/0010-server-retention.md) |
 | `core/src/email/receipts.rs` | Read-receipt policy and ephemeral defaults, with per-contact overrides | [0011](adr/0011-receipts-and-ephemeral.md) |
 | `core/src/email/compose.rs` | Per-message recipient sets on the wire: Cc and Bcc | [0014](adr/0014-recipient-sets-on-the-wire.md) |
+| `core/src/email/autocrypt.rs` | Key-contact from an incoming `Autocrypt:` header, so opportunistic encryption can start | [0021](adr/0021-autocrypt-key-contacts.md) |
+| `core/src/email/structured.rs` | SML / Schema.org-for-Email extraction with a trust verdict | [0016](adr/0016-structured-email.md) |
 | `core/src/email/vault.rs` | At-rest protection reporting | [0015](adr/0015-at-rest-and-backup.md) |
 | `core/src/email/backup.rs` | Encrypted backup with staleness tracking | [0015](adr/0015-at-rest-and-backup.md) |
 | `core/deltachat-jsonrpc/src/api/types/email.rs` | JSON-RPC types for the email layer | [0012](adr/0012-rpc-and-cli.md) |
@@ -173,3 +178,35 @@ ciphertext" rather than to a crash. The `blob.rs` write hook is the one that
 matters: it must stay **after** the hash and **after** the rename. There is a
 test, `blobcrypt_tests::test_dedup_still_hashes_plaintext`, and it is the only
 thing standing between a merge and a silently doubled blobdir.
+
+Conflict guidance for encryption, which is the subtlest thing in this fork.
+Upstream `v2.59` decides encryption by *contact type* — `Chat::is_encrypted`
+reads the contact row's `fingerprint` — and mints such a contact only from a
+signed message or SecureJoin. eeemail depends on three things holding together
+on top of that, and a merge can break any of them without failing to compile:
+
+* `email::autocrypt::adopt` creates the key-contact an `Autocrypt:` header
+  implies, which is the only reason opportunistic encryption can ever start.
+  Guarded by `autocrypt_tests::test_mail_after_an_autocrypt_header_is_encrypted`.
+* `email::compose::send` addresses the **key**-contact when one exists. Resolving
+  with `Contact::add_or_lookup` alone returns the address-contact and sends
+  cleartext to someone whose key we hold, including someone verified by QR.
+  Guarded by `compose_tests::test_a_verified_contact_gets_an_encrypted_chat`.
+* `email::gating::is_trusted` decides trust per *person*, across every contact
+  row sharing an address. The same correspondent is routinely two rows, and
+  asking only about the row a message arrived on holds the first encrypted reply
+  from everyone the user has written to. Guarded by
+  `gating_tests::test_an_encrypted_reply_from_someone_you_wrote_to_is_not_held`.
+
+If upstream reinstates Autocrypt-derived contacts, `adopt` becomes redundant and
+should be deleted rather than left to race with it.
+
+Conflict guidance for structured email: `email::structured` re-walks the raw
+MIME with `mailparse` instead of reading `MimeMessage::parts`, because core
+drops an `application/*` part that has no filename as a "Missing attachment"
+(`mimeparser.rs`) — which is exactly the shape an SML part has. If a merge makes
+`parts` carry those, the walk can be simplified; until then, reading `parts`
+would silently find nothing. Guarded by
+`structured_tests::test_a_machine_readable_part_is_extracted`, and the
+`Missing attachment` warning is asserted in the tests so that the day it stops
+being logged is a test failure rather than a silent behaviour change.

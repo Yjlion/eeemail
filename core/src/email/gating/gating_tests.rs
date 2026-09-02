@@ -212,3 +212,42 @@ async fn test_outgoing_mail_is_never_held() -> Result<()> {
     assert!(held(&alice).await?.is_empty());
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_an_encrypted_reply_from_someone_you_wrote_to_is_not_held() -> Result<()> {
+    let mut tcm = TestContextManager::new();
+    let alice = tcm.alice().await;
+    let bob = tcm.bob().await;
+    alice.allow_unencrypted().await?;
+    crate::email::policy::apply_defaults(&alice).await?;
+    alice.set_config_bool(Config::InboxGating, true).await?;
+    let bob_addr = bob.get_config(Config::Addr).await?.unwrap();
+
+    // Alice writes first, which makes her *address*-contact for Bob known.
+    crate::email::compose::send(
+        &alice,
+        &crate::email::compose::RecipientSet {
+            to: vec![bob_addr.clone()],
+            ..Default::default()
+        },
+        "Numbers",
+        "hello",
+        None,
+    )
+    .await?;
+    alice.pop_sent_msg().await;
+
+    // Bob's encrypted reply arrives attributed to a *key*-contact -- a
+    // different row, with no origin of its own. Holding it would mean the
+    // inbox silently swallows the replies to the user's own mail.
+    tcm.send_recv(&bob, &alice, "encrypted reply").await;
+
+    let received = alice.get_last_msg().await;
+    let tags = tags::of_msg(&alice, received.get_id()).await?;
+    assert!(
+        !tags.system.contains(&SystemTag::Holding),
+        "an encrypted reply from someone the user wrote to was held: {:?}",
+        tags.system
+    );
+    Ok(())
+}

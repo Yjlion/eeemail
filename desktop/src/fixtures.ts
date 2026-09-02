@@ -39,6 +39,7 @@ type Row = {
   to: string[];
   cc: string[];
   parent: number | null;
+  structured?: { seq: number; json: string; trusted: boolean; source: string }[];
 };
 
 const ROWS: Row[] = [
@@ -143,6 +144,24 @@ const ROWS: Row[] = [
     to: ["you@example.org"],
     cc: [],
     parent: null,
+    // Deliberately on the held message: a stranger's structured data is
+    // exactly the case that must render inert, and putting it here means the
+    // existing `holding` screenshot shows it.
+    structured: [
+      {
+        seq: 0,
+        trusted: false,
+        source: "htmlScript",
+        json: JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "Offer",
+          name: "Bicycle, blue",
+          price: "180.00",
+          priceCurrency: "EUR",
+          url: "https://elsewhere.example/listing/4417",
+        }),
+      },
+    ],
   },
   {
     msgId: 107,
@@ -194,6 +213,38 @@ const ROWS: Row[] = [
     to: ["you@example.org"],
     cc: [],
     parent: null,
+  },
+  {
+    msgId: 110,
+    subject: "Your parcel is on its way",
+    preview: "Dispatched today. Expected between Thursday and Friday.",
+    from: "Mira Dorn",
+    fromAddr: "mira@dorn.example",
+    timestamp: NOW - 3 * HOUR,
+    unread: false,
+    encrypted: true,
+    verified: true,
+    hasAttachment: false,
+    tags: ["inbox"],
+    body: "Dispatched today. Expected between Thursday and Friday.",
+    to: ["you@example.org"],
+    cc: [],
+    parent: null,
+    structured: [
+      {
+        seq: 0,
+        trusted: true,
+        source: "alternative",
+        json: JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "ParcelDelivery",
+          trackingNumber: "XQ-4417-2290",
+          deliveryAddress: { addressLocality: "Leipzig", postalCode: "04109" },
+          expectedArrivalFrom: "2026-09-03",
+          expectedArrivalUntil: "2026-09-04",
+        }),
+      },
+    ],
   },
 ];
 
@@ -295,7 +346,7 @@ export class DemoRpc {
         return ids
           .map(rowOf)
           .filter((r): r is Row => r !== undefined)
-          .map(({ body, to, cc, parent, fromAddr, ...row }) => row);
+          .map(({ body, to, cc, parent, fromAddr, structured, ...row }) => row);
       }
       case "get_message": {
         const r = rowOf(arg<number>(1));
@@ -303,6 +354,8 @@ export class DemoRpc {
           ? { id: r.msgId, subject: r.subject, text: r.body, hasHtml: false }
           : null;
       }
+      case "get_structured_data":
+        return rowOf(arg<number>(1))?.structured ?? [];
       case "get_message_html":
         return null;
       case "get_message_recipients": {
