@@ -53,8 +53,9 @@ use types::chat::FullChat;
 use types::contact::{ContactObject, VcardContact};
 use types::email::{
     JsonrpcBackupStatus, JsonrpcEncryptionMode, JsonrpcLabel, JsonrpcMdnPolicy,
-    JsonrpcMessageCrypto, JsonrpcProtection, JsonrpcRecipient, JsonrpcRecipientSet,
-    JsonrpcSearchQuery, JsonrpcServerRetention, JsonrpcThreadItem, flatten_thread,
+    JsonrpcMessageCrypto, JsonrpcMessageRow, JsonrpcProtection, JsonrpcRecipient,
+    JsonrpcRecipientSet, JsonrpcSearchQuery, JsonrpcServerRetention, JsonrpcSystemTag, JsonrpcTags,
+    JsonrpcThreadItem, JsonrpcTrashed, flatten_thread,
 };
 use types::events::Event;
 use types::http::HttpResponse;
@@ -3091,7 +3092,7 @@ impl CommandApi {
         let query = email::search::SearchQuery {
             text: query.text.unwrap_or_default(),
             label: query.label_id.map(email::labels::LabelId::new),
-            archived: query.archived,
+            tag: query.tag.map(Into::into),
             chat_id: query.chat_id.map(ChatId::new),
         };
         Ok(email::search::search(&ctx, &query)
@@ -3280,6 +3281,258 @@ impl CommandApi {
             seconds.map(timer_from_secs),
         )
         .await
+    }
+
+    // -----------------------------------------------------------------------
+    // eeemail: system tags, gating, and the trash.
+    // docs/adr/0017-system-tags.md, 0018-contact-gating.md,
+    // 0019-recoverable-ephemeral-expiry.md
+    // -----------------------------------------------------------------------
+
+    /// Every tag on a message, system and user-created together.
+    ///
+    /// One call rather than several, because assembling it means knowing which
+    /// system tags are stored and which are derived, and a client that has to
+    /// know that will eventually get it wrong.
+    async fn get_message_tags(&self, account_id: u32, msg_id: u32) -> Result<JsonrpcTags> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::tags::of_msg(&ctx, MsgId::new(msg_id)).await?.into())
+    }
+
+    /// The messages carrying a system tag, newest first.
+    async fn get_tagged_messages(
+        &self,
+        account_id: u32,
+        tag: JsonrpcSystemTag,
+    ) -> Result<Vec<u32>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::tags::messages(&ctx, tag.into())
+            .await?
+            .into_iter()
+            .map(|id| id.to_u32())
+            .collect())
+    }
+
+    /// Whether mail from unverified, unknown senders is held rather than
+    /// delivered. On by default.
+    async fn get_inbox_gating(&self, account_id: u32) -> Result<bool> {
+        let ctx = self.get_context(account_id).await?;
+        email::gating::is_enabled(&ctx).await
+    }
+
+    /// Turns inbox gating on or off.
+    ///
+    /// Turning it off releases everything currently held: leaving mail in a
+    /// view the user just switched off would strand it there until it purged.
+    async fn set_inbox_gating(&self, account_id: u32, enabled: bool) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::gating::set_enabled(&ctx, enabled).await
+    }
+
+    /// How many days held mail waits before it is discarded.
+    async fn get_hold_days(&self, _account_id: u32) -> Result<i64> {
+        Ok(email::gating::HOLD_DAYS)
+    }
+
+    /// Releases a contact's held mail, past and future.
+    ///
+    /// A no-op if the contact is still neither verified nor known: trust is
+    /// gained by accepting or verifying them, not by calling this.
+    async fn release_held_contact(&self, account_id: u32, contact_id: u32) -> Result<u32> {
+        let ctx = self.get_context(account_id).await?;
+        let released = email::gating::release(&ctx, &[ContactId::new(contact_id)]).await?;
+        Ok(u32::try_from(released).unwrap_or(u32::MAX))
+    }
+
+    /// Throws messages away: they stay readable and restorable until purged.
+    async fn trash_messages(&self, account_id: u32, msg_ids: Vec<u32>) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        let msgs: Vec<MsgId> = msg_ids.into_iter().map(MsgId::new).collect();
+        email::ephemeral::trash(&ctx, &msgs).await
+    }
+
+    /// Takes messages back out of the trash.
+    async fn restore_messages(&self, account_id: u32, msg_ids: Vec<u32>) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        let msgs: Vec<MsgId> = msg_ids.into_iter().map(MsgId::new).collect();
+        email::ephemeral::restore(&ctx, &msgs).await
+    }
+
+    /// What the trash knows about a message, or `null` if it is not in it.
+    ///
+    /// `reason` is what lets a UI say "this expired" rather than "you deleted
+    /// this" about a message the user did not throw away.
+    async fn get_trashed_message(
+        &self,
+        account_id: u32,
+        msg_id: u32,
+    ) -> Result<Option<JsonrpcTrashed>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::ephemeral::trashed(&ctx, MsgId::new(msg_id))
+            .await?
+            .map(Into::into))
+    }
+
+    /// How many days a trashed message stays recoverable. `0` means a fired
+    /// timer destroys the message immediately.
+    async fn get_trash_purge_days(&self, account_id: u32) -> Result<i64> {
+        let ctx = self.get_context(account_id).await?;
+        email::ephemeral::purge_days(&ctx).await
+    }
+
+    /// Sets how many days a trashed message stays recoverable.
+    ///
+    /// `0` turns the recoverable window off, which is what a user who wants a
+    /// fired timer to mean *gone* would choose. It does not retroactively purge
+    /// what is already in the trash.
+    async fn set_trash_purge_days(&self, account_id: u32, days: i64) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        ctx.set_config(
+            deltachat::config::Config::EphemeralTrashDays,
+            Some(&days.max(0).to_string()),
+        )
+        .await
+    }
+
+    /// When one message expires, as a Unix timestamp, or `null` for no timer.
+    async fn get_message_ephemeral_timer(
+        &self,
+        account_id: u32,
+        msg_id: u32,
+    ) -> Result<Option<i64>> {
+        let ctx = self.get_context(account_id).await?;
+        email::ephemeral::message_expires_at(&ctx, MsgId::new(msg_id)).await
+    }
+
+    /// Sets one message's ephemeral timer in seconds, overriding its
+    /// conversation. `0` clears it.
+    ///
+    /// This is how a user keeps a message they were about to lose, and how they
+    /// shorten one they want gone sooner.
+    async fn set_message_ephemeral_timer(
+        &self,
+        account_id: u32,
+        msg_id: u32,
+        seconds: u32,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::ephemeral::set_message_timer(&ctx, MsgId::new(msg_id), timer_from_secs(seconds))
+            .await
+    }
+
+    /// Everything a message list needs, for many messages, in one call.
+    ///
+    /// Replaces two round trips per row. Unknown or deleted ids are skipped
+    /// rather than erroring: a list built from a search result races with
+    /// housekeeping, and one message disappearing must not empty the pane.
+    async fn get_message_rows(
+        &self,
+        account_id: u32,
+        msg_ids: Vec<u32>,
+    ) -> Result<Vec<JsonrpcMessageRow>> {
+        let ctx = self.get_context(account_id).await?;
+        let mut rows = Vec::with_capacity(msg_ids.len());
+        for msg_id in msg_ids {
+            let msg_id = MsgId::new(msg_id);
+            let Ok(msg) = Message::load_from_db(&ctx, msg_id).await else {
+                continue;
+            };
+            let crypto = email::policy::message_crypto(&ctx, msg_id).await?;
+            let tags = email::tags::of_msg(&ctx, msg_id).await?;
+            let from = match Contact::get_by_id(&ctx, msg.get_from_id()).await {
+                Ok(contact) => contact.get_display_name().to_string(),
+                Err(_) => String::new(),
+            };
+            let text = msg.get_text();
+            rows.push(JsonrpcMessageRow {
+                msg_id: msg_id.to_u32(),
+                subject: msg.get_subject().to_string(),
+                // Trimmed here rather than in the client, so every client
+                // shows the same thing and none of them ships the whole body
+                // of every message over the pipe to render 90 characters.
+                preview: text.chars().take(140).collect(),
+                from,
+                timestamp: msg.get_timestamp(),
+                unread: msg.get_state() == MessageState::InFresh,
+                encrypted: crypto.encrypted,
+                verified: crypto.verified,
+                has_attachment: msg.get_file(&ctx).is_some(),
+                tags: tags.system.into_iter().map(Into::into).collect(),
+            });
+        }
+        Ok(rows)
+    }
+
+    /// Composes and sends one message to a recipient set.
+    ///
+    /// One call rather than four, because the *order* of those four is
+    /// load-bearing: the recipient set has to be stored before the message is
+    /// sent or every Bcc is silently dropped. See `email::compose::send`.
+    ///
+    /// `attachment` is a filesystem path, and there is one, because core
+    /// carries one file per message.
+    async fn send_email(
+        &self,
+        account_id: u32,
+        recipients: JsonrpcRecipientSet,
+        subject: String,
+        text: String,
+        attachment: Option<String>,
+    ) -> Result<u32> {
+        let ctx = self.get_context(account_id).await?;
+        let path = attachment.map(std::path::PathBuf::from);
+        let msg_id =
+            email::compose::send(&ctx, &recipients.into(), &subject, &text, path.as_deref())
+                .await?;
+        Ok(msg_id.to_u32())
+    }
+
+    // -----------------------------------------------------------------------
+    // eeemail: encryption at rest.
+    // docs/adr/0015-at-rest-and-backup.md, 0020-blobdir-encryption.md
+    // -----------------------------------------------------------------------
+
+    /// Sets or changes the database passphrase. An empty string turns database
+    /// encryption off.
+    ///
+    /// This protects the database and **not** the blobdir. Call
+    /// `get_at_rest_protection` afterwards and show what it says, rather than
+    /// reporting this as "encrypted": on its own it leaves every attachment and
+    /// every retained message source readable on disk.
+    async fn set_database_passphrase(&self, account_id: u32, passphrase: String) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::vault::set_passphrase(&ctx, &passphrase).await
+    }
+
+    /// Turns on encryption of attachments and retained message sources, and
+    /// encrypts those already on disk. Returns how many blobs were converted.
+    ///
+    /// Fails if the database has no passphrase: the blob key is stored in the
+    /// database, so encrypting blobs without encrypting the database protects
+    /// nothing.
+    ///
+    /// Resumable. Rerunning after an interruption converts whatever is left.
+    async fn enable_blob_encryption(&self, account_id: u32) -> Result<u32> {
+        let ctx = self.get_context(account_id).await?;
+        let converted = email::blobcrypt::enable(&ctx).await?;
+        Ok(u32::try_from(converted).unwrap_or(u32::MAX))
+    }
+
+    /// Turns blob encryption off and decrypts what is on disk.
+    async fn disable_blob_encryption(&self, account_id: u32) -> Result<u32> {
+        let ctx = self.get_context(account_id).await?;
+        let converted = email::blobcrypt::disable(&ctx).await?;
+        Ok(u32::try_from(converted).unwrap_or(u32::MAX))
+    }
+
+    /// Whether blob encryption is switched on.
+    ///
+    /// Not the same question as `get_at_rest_protection().blobsEncrypted`,
+    /// which is false while a migration is still running. This is what a
+    /// settings toggle should reflect; that is what a status line should.
+    async fn get_blob_encryption(&self, account_id: u32) -> Result<bool> {
+        let ctx = self.get_context(account_id).await?;
+        email::blobcrypt::is_enabled(&ctx).await
     }
 }
 

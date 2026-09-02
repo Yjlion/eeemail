@@ -207,6 +207,31 @@ pub async fn apply_defaults(context: &Context) -> Result<()> {
         // between an email client and a closed messenger.
         EncryptionMode::set(context, EncryptionMode::Opportunistic).await?;
     }
+    if context
+        .get_config_bool_opt(Config::InboxGating)
+        .await?
+        .is_none()
+    {
+        // On by default for eeemail, off in upstream's compile-time default: a
+        // gate the user has to find and enable protects only the people who
+        // already knew to look for it. See docs/adr/0018-contact-gating.md.
+        context.set_config_bool(Config::InboxGating, true).await?;
+    }
+    if context
+        .get_config_opt(Config::EphemeralTrashDays)
+        .await?
+        .is_none()
+    {
+        // A fired timer moves the message to `Trash` and leaves it readable,
+        // rather than destroying it. See
+        // docs/adr/0019-recoverable-ephemeral-expiry.md.
+        context
+            .set_config(
+                Config::EphemeralTrashDays,
+                Some(&super::ephemeral::DEFAULT_PURGE_DAYS.to_string()),
+            )
+            .await?;
+    }
     Ok(())
 }
 

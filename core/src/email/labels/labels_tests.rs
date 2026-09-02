@@ -43,8 +43,12 @@ async fn test_create_is_idempotent_and_case_insensitive() -> Result<()> {
     assert_eq!(first.id, second.id);
     assert_eq!(second.name, "Work", "the first spelling is kept");
 
+    // System labels first, then user ones alphabetically.
     let names: Vec<String> = list(&t).await?.into_iter().map(|l| l.name).collect();
-    assert_eq!(names, vec![ARCHIVE.to_string(), "Work".to_string()]);
+    let mut expected: Vec<String> = RESERVED.iter().map(|n| n.to_string()).collect();
+    expected.sort_by_key(|n| n.to_lowercase());
+    expected.push("Work".to_string());
+    assert_eq!(names, expected);
     Ok(())
 }
 

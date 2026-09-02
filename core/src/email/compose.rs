@@ -37,13 +37,14 @@
 //!
 //! See `docs/adr/0014-recipient-sets-on-the-wire.md`.
 
-use anyhow::Result;
+use anyhow::{Result, bail, ensure};
 use deltachat_contact_tools::{ContactAddress, addr_normalize};
 
+use crate::chat::{ChatId, send_msg};
 use crate::contact::{Contact, Origin};
 use crate::context::Context;
 use crate::key::{DcKey, SignedPublicKey};
-use crate::message::MsgId;
+use crate::message::{Message, MsgId, Viewtype};
 
 use super::recipients::{Recipient, RecipientKind};
 
@@ -114,6 +115,72 @@ fn split_addr(input: &str) -> (String, String) {
     // Malformed: return it whole rather than guess, so a bad address fails
     // visibly instead of being delivered somewhere unintended.
     (String::new(), input.to_string())
+}
+
+/// Composes and sends one message to a recipient set.
+///
+/// This is the whole send path in one call, and it exists because the order of
+/// its steps is load-bearing. The recipient set has to be **stored before the
+/// message is sent**: `create_send_msg_jobs` reads `msg_recipients` to find the
+/// Bcc addresses, which appear in no header and so cannot be recovered from the
+/// rendered message. A caller that assembled these steps itself and got the
+/// order wrong would silently drop every blind copy -- which is a disclosure
+/// bug in the other direction from the usual one, and exactly the kind of thing
+/// a UI should not be able to do.
+///
+/// So the message is persisted as a draft first, which is what gives it an id
+/// to hang the recipient set on, and then sent.
+///
+/// The chat is derived from the first `To` address. Everyone else reaches the
+/// header, the envelope and the key set through [`extra_recipients`], so who
+/// the chat contains does not decide who receives the message.
+///
+/// One attachment, because core carries one file per message. Sending several
+/// files means several messages, and pretending otherwise here would only move
+/// the surprise further from where the user chose them.
+pub async fn send(
+    context: &Context,
+    recipients: &RecipientSet,
+    subject: &str,
+    text: &str,
+    attachment: Option<&std::path::Path>,
+) -> Result<MsgId> {
+    ensure!(!recipients.is_empty(), "a message needs a recipient");
+    let Some(primary) = recipients.to.first() else {
+        // A message with only Cc or Bcc has no chat to belong to and no
+        // visible addressee. Refused rather than guessed at.
+        bail!("a message needs at least one To: address");
+    };
+
+    let (name, addr) = split_addr(primary.trim());
+    let contact_addr = ContactAddress::new(&addr)?;
+    let contact_id = Contact::add_or_lookup(context, &name, &contact_addr, Origin::OutgoingTo)
+        .await?
+        .0;
+    let chat_id = ChatId::create_for_contact(context, contact_id).await?;
+
+    let mut msg = match attachment {
+        Some(path) => {
+            let mut msg = Message::new(Viewtype::File);
+            // Deduplicating: an attachment sent twice is stored once, the same
+            // property retained raw MIME relies on.
+            msg.set_file_and_deduplicate(context, path, None, None)?;
+            msg.set_text(text.to_string());
+            msg
+        }
+        None => Message::new_text(text.to_string()),
+    };
+    if !subject.trim().is_empty() {
+        msg.set_subject(subject.to_string());
+    }
+
+    // Persisting as a draft is what assigns the id. Without an id there is
+    // nothing to key `msg_recipients` on, and Bcc would be lost.
+    chat_id.set_draft(context, Some(&mut msg)).await?;
+    ensure!(!msg.get_id().is_unset(), "draft was not persisted");
+    set_recipients(context, msg.get_id(), recipients).await?;
+
+    send_msg(context, chat_id, &mut msg).await
 }
 
 /// One addressee that is not a member of the message's chat.

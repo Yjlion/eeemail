@@ -20,6 +20,31 @@ fn mail(mid: &str, subject: &str, to: &str, body: &str) -> Vec<u8> {
     .into_bytes()
 }
 
+/// Like [`mail`], but from somebody else.
+///
+/// [`mail`] hardcodes `From: alice@example.org`, which is the test context
+/// itself -- so those messages are self-sent and outgoing. Anything about the
+/// inbox or about who sent a message needs a real correspondent.
+fn mail_from(from: &str, mid: &str, subject: &str, body: &str) -> Vec<u8> {
+    format!(
+        "From: {from}\r\n\
+         To: alice@example.org\r\n\
+         Subject: {subject}\r\n\
+         Message-ID: <{mid}>\r\n\
+         Date: Mon, 31 Aug 2026 12:00:00 +0000\r\n\
+         \r\n\
+         {body}\r\n"
+    )
+    .into_bytes()
+}
+
+async fn recv_from(t: &TestContext, from: &str, mid: &str, subject: &str) -> Result<MsgId> {
+    let received = receive_imf(t, &mail_from(from, mid, subject, "body"), false)
+        .await?
+        .unwrap();
+    Ok(*received.msg_ids.last().unwrap())
+}
+
 async fn recv(t: &TestContext, mid: &str, subject: &str, to: &str, body: &str) -> Result<MsgId> {
     let received = receive_imf(t, &mail(mid, subject, to, body), false)
         .await?
@@ -167,22 +192,54 @@ async fn test_filter_by_label() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_filter_by_archived() -> Result<()> {
+async fn test_filter_by_system_tag() -> Result<()> {
     let t = TestContext::new_alice().await;
     t.allow_unencrypted().await?;
-    let a = recv(&t, "a@x", "report", "bob@example.net", "body").await?;
-    let b = recv(&t, "b@x", "report", "bob@example.net", "body").await?;
+    // Gating off: this test is about archive and the inbox, not about who sent.
+    crate::email::gating::set_enabled(&t, false).await?;
+    let a = recv_from(&t, "bob@example.net", "a@x", "report").await?;
+    let b = recv_from(&t, "bob@example.net", "b@x", "report").await?;
     labels::archive(&t, &[a]).await?;
 
     assert_eq!(
-        search(&t, &SearchQuery::text("report").with_archived(true)).await?,
+        search(
+            &t,
+            &SearchQuery::text("report").with_tag(SystemTag::Archive)
+        )
+        .await?,
         vec![a]
     );
     assert_eq!(
-        search(&t, &SearchQuery::text("report").with_archived(false)).await?,
+        search(&t, &SearchQuery::text("report").with_tag(SystemTag::Inbox)).await?,
         vec![b],
-        "the inbox is what has not been archived, with no row of its own"
+        "the inbox is what carries no system tag, with no row of its own"
     );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_held_mail_is_not_in_the_inbox() -> Result<()> {
+    let t = TestContext::new_alice().await;
+    t.allow_unencrypted().await?;
+    // Gating on: a stranger's mail is searchable but is not in the inbox. This
+    // is the case the old `archived: Option<bool>` flag could not express.
+    crate::email::gating::set_enabled(&t, true).await?;
+    let held = recv_from(&t, "stranger@example.net", "h@x", "report").await?;
+
+    assert_eq!(
+        search(
+            &t,
+            &SearchQuery::text("report").with_tag(SystemTag::Holding)
+        )
+        .await?,
+        vec![held]
+    );
+    assert!(
+        search(&t, &SearchQuery::text("report").with_tag(SystemTag::Inbox))
+            .await?
+            .is_empty()
+    );
+    assert_eq!(search(&t, &SearchQuery::text("report")).await?, vec![held]);
     Ok(())
 }
 

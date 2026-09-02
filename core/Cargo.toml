@@ -50,6 +50,9 @@ async-smtp = { version = "0.10.2", default-features = false, features = ["runtim
 async_zip = { version = "0.0.18", default-features = false, features = ["deflate", "tokio-fs"] }
 base64 = { workspace = true }
 blake3 = "1.8.2"
+# eeemail: per-blob encryption at rest. Already in the tree via rpgp, so this
+# adds a direct dependency rather than a new one.
+chacha20poly1305 = "0.10"
 brotli = { version = "8", default-features=false, features = ["std"] }
 bytes = "1"
 chrono = { workspace = true, features = ["alloc", "clock", "std"] }

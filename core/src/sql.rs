@@ -839,6 +839,18 @@ pub async fn housekeeping(context: &Context) -> Result<()> {
             "Housekeeping: cannot prune contact policy: {:#}.", err
         );
     }
+    // eeemail: the two deadlines. Both destroy mail, so both go through
+    // `MsgId::trash` rather than deleting rows, and both run before reference
+    // collection so the blobs they free are reclaimed in this same pass.
+    if let Err(err) = crate::email::gating::purge(context).await {
+        warn!(context, "Housekeeping: cannot purge held mail: {:#}.", err);
+    }
+    if let Err(err) = crate::email::ephemeral::purge(context).await {
+        warn!(
+            context,
+            "Housekeeping: cannot purge trashed messages: {:#}.", err
+        );
+    }
 
     if let Err(err) = remove_unused_files(context).await {
         warn!(

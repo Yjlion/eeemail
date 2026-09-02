@@ -2752,6 +2752,42 @@ UPDATE msgs SET state=24 WHERE state=18; -- Change OutPreparing to OutFailed.
         .await?;
     }
 
+    // eeemail: system tags, contact gating, and recoverable ephemeral expiry.
+    // docs/adr/0017-system-tags.md, 0018-contact-gating.md,
+    // 0019-recoverable-ephemeral-expiry.md
+    inc_and_check(&mut migration_version, 169)?;
+    if dbversion < migration_version {
+        sql.execute_migration(
+            // Mail from a sender who is neither verified nor known. Held rather
+            // than delivered, and discarded if never accepted.
+            "CREATE TABLE held_msgs (
+                msg_id INTEGER PRIMARY KEY NOT NULL, -- msgs.id
+                held_at INTEGER NOT NULL,
+                purge_at INTEGER NOT NULL -- local deadline; deliberately not synced
+            ) STRICT;
+            CREATE INDEX held_msgs_index1 ON held_msgs (purge_at);
+
+            -- Messages in the trash and when they stop being recoverable.
+            -- `reason` distinguishes an expired ephemeral message from one the
+            -- user threw away, because only the former needs explaining in the
+            -- UI ('this expired' reads very differently from 'you deleted this').
+            CREATE TABLE trashed_msgs (
+                msg_id INTEGER PRIMARY KEY NOT NULL, -- msgs.id
+                trashed_at INTEGER NOT NULL,
+                purge_at INTEGER NOT NULL, -- local deadline; deliberately not synced
+                reason INTEGER NOT NULL -- 0 = user deleted, 1 = ephemeral timer expired
+            ) STRICT;
+            CREATE INDEX trashed_msgs_index1 ON trashed_msgs (purge_at);
+
+            INSERT INTO labels (name, name_norm, system, created)
+                VALUES (\'Trash\', \'trash\', 1, 0);
+            INSERT INTO labels (name, name_norm, system, created)
+                VALUES (\'Holding\', \'holding\', 1, 0);",
+            migration_version,
+        )
+        .await?;
+    }
+
     let new_version = sql
         .get_raw_config_int(VERSION_CFG)
         .await?

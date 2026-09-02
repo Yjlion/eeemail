@@ -108,6 +108,23 @@ impl<'a> BlobObject<'a> {
             // Renaming is atomic, so this will avoid race conditions.
             std::fs::rename(src_in_blobdir, &new_path)?;
 
+            // eeemail: encrypt at rest, if the user asked for it. **After** the
+            // hash above, which is taken over the plaintext -- hashing
+            // ciphertext with a random nonce would give every copy of the same
+            // message a different name and quietly double disk usage.
+            // Best-effort: a blob that fails to encrypt is still a blob that
+            // was successfully stored, and losing it would be worse than
+            // leaving it in the state `protection()` already reports.
+            // See docs/adr/0020-blobdir-encryption.md.
+            {
+                let path = new_path.clone();
+                if let Err(err) = tokio::runtime::Handle::current()
+                    .block_on(crate::email::blobcrypt::protect(context, &path))
+                {
+                    warn!(context, "Cannot encrypt blob at rest: {err:#}");
+                }
+            }
+
             context.emit_event(EventType::NewBlobFile(blob.as_name().to_string()));
             Ok(blob)
         })

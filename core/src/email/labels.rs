@@ -46,6 +46,22 @@ use crate::tools::time;
 /// Name of the reserved label that marks a message as archived.
 pub const ARCHIVE: &str = "Archive";
 
+/// Name of the reserved label for messages the user threw away, and for
+/// ephemeral messages whose timer has fired. See
+/// `docs/adr/0019-recoverable-ephemeral-expiry.md`.
+pub const TRASH: &str = "Trash";
+
+/// Name of the reserved label for mail from a sender who is neither verified
+/// nor known. See `docs/adr/0018-contact-gating.md`.
+pub const HOLDING: &str = "Holding";
+
+/// Reserved names are not localised.
+///
+/// A name is the identifier on the sync wire, so translating it would make two
+/// devices in two locales disagree about which tag is which. The UI translates
+/// the display string. See `docs/adr/0017-system-tags.md`.
+pub const RESERVED: [&str; 3] = [ARCHIVE, TRASH, HOLDING];
+
 /// How long a label application for a message we do not have is kept.
 ///
 /// Long enough to cover a device that has been offline for a while, short
@@ -143,9 +159,20 @@ pub async fn by_name(context: &Context, name: &str) -> Result<Option<Label>> {
 
 /// Returns the reserved archive label.
 pub async fn archive_label(context: &Context) -> Result<Label> {
-    by_name(context, ARCHIVE)
+    reserved(context, ARCHIVE).await
+}
+
+/// Returns a reserved label by name.
+///
+/// Reserved labels are created by the migration, so a missing one is a
+/// corrupted database rather than something to paper over by creating it here:
+/// creating it would give this device a label the user's other devices do not
+/// have, and the sync channel would then carry it as if it were a user tag.
+pub async fn reserved(context: &Context, name: &str) -> Result<Label> {
+    debug_assert!(RESERVED.contains(&name), "{name} is not a reserved label");
+    by_name(context, name)
         .await?
-        .context("archive label is missing; the database was not migrated")
+        .with_context(|| format!("reserved label {name} is missing; the database was not migrated"))
 }
 
 /// Creates a label, or returns the existing one if the name is already taken.
@@ -324,16 +351,23 @@ async fn load(context: &Context, id: LabelId) -> Result<Label> {
 /// Applies a label to messages. Already-labelled messages are left alone.
 pub async fn apply(context: &Context, msgs: &[MsgId], id: LabelId) -> Result<()> {
     let label = load(context, id).await?;
-    set(context, msgs, &label, true, Sync::Sync).await
+    set_ext(context, msgs, &label, true, Sync::Sync).await
 }
 
 /// Removes a label from messages.
 pub async fn unapply(context: &Context, msgs: &[MsgId], id: LabelId) -> Result<()> {
     let label = load(context, id).await?;
-    set(context, msgs, &label, false, Sync::Sync).await
+    set_ext(context, msgs, &label, false, Sync::Sync).await
 }
 
-async fn set(
+/// Applies or removes a label, optionally without syncing.
+///
+/// `Sync::Nosync` is for tags a device derives for itself --
+/// [`super::gating`]'s `Holding` and [`super::ephemeral`]'s automatic `Trash`.
+/// Syncing those would let one device's classification of a message override
+/// another device's, when both classified the same message independently and
+/// correctly.
+pub(crate) async fn set_ext(
     context: &Context,
     msgs: &[MsgId],
     label: &Label,
@@ -440,13 +474,13 @@ pub async fn msgs_with(context: &Context, id: LabelId) -> Result<Vec<MsgId>> {
 /// Archives messages: applies the reserved archive label.
 pub async fn archive(context: &Context, msgs: &[MsgId]) -> Result<()> {
     let label = archive_label(context).await?;
-    set(context, msgs, &label, true, Sync::Sync).await
+    set_ext(context, msgs, &label, true, Sync::Sync).await
 }
 
 /// Moves messages back to the inbox: removes the reserved archive label.
 pub async fn unarchive(context: &Context, msgs: &[MsgId]) -> Result<()> {
     let label = archive_label(context).await?;
-    set(context, msgs, &label, false, Sync::Sync).await
+    set_ext(context, msgs, &label, false, Sync::Sync).await
 }
 
 /// Whether a message has been archived.
@@ -584,7 +618,7 @@ async fn sync_set(
         }
     }
 
-    set(context, &resolved, &label, apply, Sync::Nosync).await?;
+    set_ext(context, &resolved, &label, apply, Sync::Nosync).await?;
 
     if !pending.is_empty() {
         let label_id = label.id;

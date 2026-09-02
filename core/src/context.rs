@@ -1070,6 +1070,22 @@ impl Context {
             self.get_config_int(Config::MdnPolicy).await?.to_string(),
         );
         res.insert(
+            "inbox_gating",
+            self.get_config_bool(Config::InboxGating).await?.to_string(),
+        );
+        res.insert(
+            "ephemeral_trash_days",
+            self.get_config_int(Config::EphemeralTrashDays)
+                .await?
+                .to_string(),
+        );
+        res.insert(
+            "blob_encryption",
+            self.get_config_bool(Config::BlobEncryption)
+                .await?
+                .to_string(),
+        );
+        res.insert(
             "ephemeral_default_seconds",
             self.get_config_int(Config::EphemeralDefaultSeconds)
                 .await?

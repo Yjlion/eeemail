@@ -140,12 +140,21 @@ pub async fn load(context: &Context, msg_id: MsgId) -> Result<Option<Vec<u8>>> {
         return Ok(None);
     };
 
-    match tokio::fs::read(&blob_path(context, &blobname)).await {
+    match super::blobcrypt::read(context, &blob_path(context, &blobname)).await {
         Ok(bytes) => Ok(Some(bytes)),
         // The row outlived its blob. Housekeeping can reclaim a blob whose row
         // is being deleted concurrently, so treat this as "not retained"
         // rather than an error, and drop the dangling row.
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+        //
+        // Downcast rather than `err.kind()`: reads go through
+        // `blobcrypt::read`, which returns `anyhow::Error`. A decryption
+        // failure is deliberately *not* matched here -- that is a real error
+        // and must not be reported as "this message never had a source".
+        Err(err)
+            if err
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|err| err.kind() == std::io::ErrorKind::NotFound) =>
+        {
             context
                 .sql
                 .execute("DELETE FROM raw_mime WHERE msg_id=?", (msg_id,))

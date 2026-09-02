@@ -6,10 +6,12 @@
 //! to one `impl` block; keeping the types out here holds the upstream diff to
 //! thin wrappers. See `docs/fork-patches.md`.
 
+use deltachat::email::ephemeral::{Reason, Trashed};
 use deltachat::email::labels::Label;
 use deltachat::email::policy::{EncryptionMode, MessageCrypto, ServerRetention};
 use deltachat::email::receipts::MdnPolicy;
 use deltachat::email::recipients::{Recipient, RecipientKind};
+use deltachat::email::tags::{SystemTag, Tags};
 use deltachat::email::threading::ThreadNode;
 use serde::{Deserialize, Serialize};
 use typescript_type_def::TypeDef;
@@ -267,9 +269,9 @@ pub struct JsonrpcSearchQuery {
     /// Restrict to messages carrying this label.
     #[serde(default)]
     pub label_id: Option<i64>,
-    /// `true` for archived only, `false` for the inbox, absent for both.
+    /// Restrict to one system tag, absent for all of them.
     #[serde(default)]
-    pub archived: Option<bool>,
+    pub tag: Option<JsonrpcSystemTag>,
     /// Restrict to one conversation.
     #[serde(default)]
     pub chat_id: Option<u32>,
@@ -348,4 +350,146 @@ impl From<deltachat::email::backup::BackupStatus> for JsonrpcBackupStatus {
             stale: s.stale,
         }
     }
+}
+
+/// A tag every account has, without the user creating anything.
+///
+/// `Inbox`, `Sent` and `Drafts` are derived from message state and have no rows;
+/// `Holding`, `Archive` and `Trash` are reserved labels, because each carries
+/// state core does not already have. A client does not need to know which is
+/// which -- that is the point of returning them through one type. See
+/// `docs/adr/0017-system-tags.md`.
+#[derive(Serialize, Deserialize, TypeDef, schemars::JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename = "SystemTag", rename_all = "camelCase")]
+pub enum JsonrpcSystemTag {
+    /// Incoming mail that has not been archived, held or trashed.
+    Inbox,
+    /// Mail from a sender who is neither verified nor known.
+    Holding,
+    /// Outgoing mail that has left the drafts state.
+    Sent,
+    /// Unsent outgoing mail.
+    Drafts,
+    /// Mail the user has archived.
+    Archive,
+    /// Mail the user threw away, or whose ephemeral timer fired.
+    Trash,
+}
+
+impl From<SystemTag> for JsonrpcSystemTag {
+    fn from(tag: SystemTag) -> Self {
+        match tag {
+            SystemTag::Inbox => Self::Inbox,
+            SystemTag::Holding => Self::Holding,
+            SystemTag::Sent => Self::Sent,
+            SystemTag::Drafts => Self::Drafts,
+            SystemTag::Archive => Self::Archive,
+            SystemTag::Trash => Self::Trash,
+        }
+    }
+}
+
+impl From<JsonrpcSystemTag> for SystemTag {
+    fn from(tag: JsonrpcSystemTag) -> Self {
+        match tag {
+            JsonrpcSystemTag::Inbox => Self::Inbox,
+            JsonrpcSystemTag::Holding => Self::Holding,
+            JsonrpcSystemTag::Sent => Self::Sent,
+            JsonrpcSystemTag::Drafts => Self::Drafts,
+            JsonrpcSystemTag::Archive => Self::Archive,
+            JsonrpcSystemTag::Trash => Self::Trash,
+        }
+    }
+}
+
+/// Every tag on a message: system tags and user tags together.
+///
+/// Returned as one value so a client never has to know the derived/stored rule.
+/// A client that has to know it will eventually get it wrong.
+#[derive(Serialize, TypeDef, schemars::JsonSchema)]
+#[serde(rename = "MessageTags", rename_all = "camelCase")]
+pub struct JsonrpcTags {
+    /// System tags, in sidebar order.
+    pub system: Vec<JsonrpcSystemTag>,
+    /// User-created tags.
+    pub user: Vec<JsonrpcLabel>,
+}
+
+impl From<Tags> for JsonrpcTags {
+    fn from(tags: Tags) -> Self {
+        Self {
+            system: tags.system.into_iter().map(Into::into).collect(),
+            user: tags.user.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// Why a message is in the trash.
+///
+/// "This expired" and "you deleted this" read very differently to someone
+/// looking at a message they did not expect to find here.
+#[derive(Serialize, TypeDef, schemars::JsonSchema)]
+#[serde(rename = "TrashReason", rename_all = "camelCase")]
+pub enum JsonrpcTrashReason {
+    /// The user threw it away.
+    Deleted,
+    /// Its ephemeral timer fired.
+    Expired,
+}
+
+/// What the trash knows about a message.
+#[derive(Serialize, TypeDef, schemars::JsonSchema)]
+#[serde(rename = "TrashedMessage", rename_all = "camelCase")]
+pub struct JsonrpcTrashed {
+    /// Unix timestamp when it was trashed.
+    pub trashed_at: i64,
+    /// Unix timestamp when it stops being recoverable.
+    pub purge_at: i64,
+    /// Why it is here.
+    pub reason: JsonrpcTrashReason,
+}
+
+impl From<Trashed> for JsonrpcTrashed {
+    fn from(t: Trashed) -> Self {
+        Self {
+            trashed_at: t.trashed_at,
+            purge_at: t.purge_at,
+            reason: match t.reason {
+                Reason::Deleted => JsonrpcTrashReason::Deleted,
+                Reason::Expired => JsonrpcTrashReason::Expired,
+            },
+        }
+    }
+}
+
+/// Everything a message-list row needs, in one value.
+///
+/// The reading client used to build each row from a `get_message` plus a
+/// `get_message_crypto`, which is two round trips per row and does not survive
+/// a few hundred messages. Rows are also exactly where a client is most tempted
+/// to skip the encryption state because fetching it costs another call, and the
+/// encryption state is the one thing a list of mail must not omit.
+#[derive(Serialize, TypeDef, schemars::JsonSchema)]
+#[serde(rename = "MessageRow", rename_all = "camelCase")]
+pub struct JsonrpcMessageRow {
+    /// The message.
+    pub msg_id: u32,
+    /// Subject, or an empty string if it had none.
+    pub subject: String,
+    /// First line or so of the body, for the list.
+    pub preview: String,
+    /// Display name of the sender, falling back to their address.
+    pub from: String,
+    /// Unix timestamp used for sorting and display.
+    pub timestamp: i64,
+    /// Not yet seen.
+    pub unread: bool,
+    /// Arrived end-to-end encrypted.
+    pub encrypted: bool,
+    /// From a contact verified through SecureJoin.
+    pub verified: bool,
+    /// Carries a file.
+    pub has_attachment: bool,
+    /// System tags on the message, in sidebar order.
+    pub tags: Vec<JsonrpcSystemTag>,
 }
