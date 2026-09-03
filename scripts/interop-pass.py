@@ -605,12 +605,12 @@ def step5_securejoin_they_invite(upstream: Rpc, grace: int, ee: Rpc, frank: int)
     upstream.call("misc_send_text_message", grace, chat_id, f"[{TOKEN}] Cold call from a stranger.")
 
     def held():
-        for msg_id in ee.call("get_tagged_messages", frank, "holding"):
+        for msg_id in ee.call("get_tagged_messages", frank, "unverified"):
             return msg_id
         return None
 
     msg_id = wait_for(held, "frank to hold the stranger's mail")
-    check("holding" in ee.call("get_message_tags", frank, msg_id)["system"],
+    check("unverified" in ee.call("get_message_tags", frank, msg_id)["system"],
           "a stranger running someone else's client is held, not delivered")
     check(bool(ee.call("get_message", frank, msg_id).get("text")),
           "and stays readable rather than quarantined")
@@ -624,11 +624,12 @@ def step5_securejoin_they_invite(upstream: Rpc, grace: int, ee: Rpc, frank: int)
     # carries no fingerprint -- while SecureJoin verifies her *key* row. Those
     # being different rows is what issue #13 was: `release` selected per row
     # while `is_trusted` decided per person, so this message stayed held, and
-    # trusted, until `purge` destroyed it at 30 days. Asserted here because a
-    # unit test cannot show it across an implementation boundary.
+    # trusted, until the deadline took it -- destroying it outright, back when
+    # `gating::purge` did that rather than sweeping it into Trash. Asserted here
+    # because a unit test cannot show it across an implementation boundary.
     def released():
         tags = ee.call("get_message_tags", frank, msg_id)["system"]
-        return "holding" not in tags
+        return "unverified" not in tags
     wait_for(released, "the held message to be released by verification", timeout=60)
     check(True, "verifying a stranger releases the mail she sent cold (issue #13)")
 

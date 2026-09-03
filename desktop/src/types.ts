@@ -30,11 +30,17 @@ export type Label = {
  * returns them through one type so a client cannot get the rule wrong.
  * See `docs/adr/0017-system-tags.md`.
  */
-export type SystemTag = "inbox" | "holding" | "sent" | "drafts" | "archive" | "trash";
+export type SystemTag =
+  | "inbox"
+  | "unverified"
+  | "sent"
+  | "drafts"
+  | "archive"
+  | "trash";
 
 export const SYSTEM_TAGS: SystemTag[] = [
   "inbox",
-  "holding",
+  "unverified",
   "sent",
   "drafts",
   "archive",
@@ -43,7 +49,7 @@ export const SYSTEM_TAGS: SystemTag[] = [
 
 export const TAG_LABELS: Record<SystemTag, string> = {
   inbox: "Inbox",
-  holding: "Holding",
+  unverified: "Unverified",
   sent: "Sent",
   drafts: "Drafts",
   archive: "Archive",
@@ -55,7 +61,7 @@ export type MessageTags = {
   user: Label[];
 };
 
-export type TrashReason = "deleted" | "expired";
+export type TrashReason = "deleted" | "expired" | "unaccepted";
 
 export type TrashedMessage = {
   trashedAt: number;

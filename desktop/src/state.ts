@@ -32,8 +32,8 @@ export const state = {
     subject: string;
     body: string;
   },
-  /** How many messages are waiting in the holding view, for the sidebar badge. */
-  heldCount: 0,
+  /** How many messages are waiting in the unverified view, for the sidebar badge. */
+  unverifiedCount: 0,
 };
 
 /** Views re-render through this, so no view needs a reference to another. */
@@ -53,6 +53,10 @@ export function changed(): void {
  * Reads the view out of `location.hash`.
  *
  * `#/tag/inbox`, `#/tag/inbox/101`, `#/label/10`, `#/screen/composer`.
+ *
+ * `#/first-run` is deliberately not one of them: it changes no state, so it
+ * falls through to the default view and the disclosure dialog opens over it.
+ * See `shell.ts`.
  *
  * Deep links exist mostly so `scripts/screenshots.sh` can photograph a screen
  * without driving clicks, which is what keeps the images reproducible. They are

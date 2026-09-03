@@ -3323,15 +3323,31 @@ impl CommandApi {
     /// Turns inbox gating on or off.
     ///
     /// Turning it off releases everything currently held: leaving mail in a
-    /// view the user just switched off would strand it there until it purged.
+    /// view the user just switched off would strand it there until it was
+    /// swept.
     async fn set_inbox_gating(&self, account_id: u32, enabled: bool) -> Result<()> {
         let ctx = self.get_context(account_id).await?;
         email::gating::set_enabled(&ctx, enabled).await
     }
 
-    /// How many days held mail waits before it is discarded.
-    async fn get_hold_days(&self, _account_id: u32) -> Result<i64> {
-        Ok(email::gating::HOLD_DAYS)
+    /// How many days mail waits in the unverified view before it is swept into
+    /// the trash. `0` means it waits indefinitely.
+    async fn get_unverified_trash_days(&self, account_id: u32) -> Result<i64> {
+        let ctx = self.get_context(account_id).await?;
+        email::gating::hold_days(&ctx).await
+    }
+
+    /// Sets how many days mail waits in the unverified view.
+    ///
+    /// `0` means never sweep. It is not "sweep now": someone who wants
+    /// unverified mail gone at once turns gating off, which releases it to the
+    /// inbox where they can delete it.
+    ///
+    /// The deadline is measured from when each message was held and read afresh
+    /// on every sweep, so this does apply to mail already waiting.
+    async fn set_unverified_trash_days(&self, account_id: u32, days: i64) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::gating::set_hold_days(&ctx, days).await
     }
 
     /// Releases a contact's held mail, past and future.
@@ -3373,8 +3389,8 @@ impl CommandApi {
             .map(Into::into))
     }
 
-    /// How many days a trashed message stays recoverable. `0` means a fired
-    /// timer destroys the message immediately.
+    /// How many days a trashed message stays recoverable, whichever way it got
+    /// there. `0` means the trash destroys immediately.
     async fn get_trash_purge_days(&self, account_id: u32) -> Result<i64> {
         let ctx = self.get_context(account_id).await?;
         email::ephemeral::purge_days(&ctx).await
@@ -3384,14 +3400,11 @@ impl CommandApi {
     ///
     /// `0` turns the recoverable window off, which is what a user who wants a
     /// fired timer to mean *gone* would choose. It does not retroactively purge
-    /// what is already in the trash.
+    /// what is already in the trash: each message keeps the deadline it was
+    /// given when it arrived there.
     async fn set_trash_purge_days(&self, account_id: u32, days: i64) -> Result<()> {
         let ctx = self.get_context(account_id).await?;
-        ctx.set_config(
-            deltachat::config::Config::EphemeralTrashDays,
-            Some(&days.max(0).to_string()),
-        )
-        .await
+        email::ephemeral::set_purge_days(&ctx, days).await
     }
 
     /// When one message expires, as a Unix timestamp, or `null` for no timer.

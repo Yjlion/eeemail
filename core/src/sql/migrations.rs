@@ -2815,6 +2815,41 @@ UPDATE msgs SET state=24 WHERE state=18; -- Change OutPreparing to OutFailed.
         .await?;
     }
 
+    // eeemail: `Holding` becomes `Unverified`, the trash window becomes
+    // trash-wide, and the unverified deadline becomes a live setting.
+    // docs/adr/0018-contact-gating.md, 0019-recoverable-ephemeral-expiry.md
+    inc_and_check(&mut migration_version, 171)?;
+    if dbversion < migration_version {
+        sql.execute_migration(
+            // The reserved label is renamed in place rather than dropped and
+            // recreated, so every `msg_labels` row keeps pointing at it and no
+            // mail loses its tag. `name` is what goes on the sync wire, so the
+            // rename reaches other devices the next time a label syncs.
+            "UPDATE labels SET name=\'Unverified\', name_norm=\'unverified\'
+                WHERE name_norm=\'holding\' AND system=1;
+
+            -- `Config::EphemeralTrashDays` is now `Config::TrashPurgeDays`.
+            -- Config keys are stored under their snake_case name, so without
+            -- this an upgraded account would silently fall back to the
+            -- compile-time default of 0 -- destroy immediately -- which is the
+            -- one value a user of this setting would never have chosen.
+            UPDATE config SET keyname=\'trash_purge_days\'
+                WHERE keyname=\'ephemeral_trash_days\';
+
+            -- The unverified deadline is now `held_at` plus the current
+            -- `Config::UnverifiedTrashDays`, computed at sweep time so that
+            -- changing the setting moves mail already waiting. A stored
+            -- `purge_at` would be a second source of truth that silently
+            -- outvoted it, so it goes; the index moves to the column that now
+            -- decides.
+            DROP INDEX IF EXISTS held_msgs_index1;
+            ALTER TABLE held_msgs DROP COLUMN purge_at;
+            CREATE INDEX held_msgs_index1 ON held_msgs (held_at);",
+            migration_version,
+        )
+        .await?;
+    }
+
     let new_version = sql
         .get_raw_config_int(VERSION_CFG)
         .await?

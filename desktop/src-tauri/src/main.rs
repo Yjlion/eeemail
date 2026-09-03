@@ -20,6 +20,15 @@
 //! event. Responses are not returned from the command, because the JSON-RPC
 //! session delivers them asynchronously on its outbound channel.
 //!
+//! # The three things that are not the pipe
+//!
+//! [`stage_attachment`] exists because a `File` in the renderer has no
+//! filesystem path and core carries attachments by path. [`first_run_pending`]
+//! and [`acknowledge_first_run`] exist because the disclosure in
+//! `docs/adr/0023-first-launch-disclosure.md` has to be shown *before* an
+//! account exists, and every per-account setting lives behind the pipe in a
+//! database that has not been created yet.
+//!
 //! # Untrusted content
 //!
 //! The reading pane renders mail from strangers. The window's CSP allows no
@@ -99,6 +108,32 @@ async fn stage_attachment(name: String, bytes: Vec<u8>) -> Result<String, String
     Ok(path.to_string_lossy().to_string())
 }
 
+/// Whether the first-launch disclosure still has to be shown.
+#[tauri::command]
+async fn first_run_pending() -> Result<bool, String> {
+    match first_run_marker() {
+        Ok(path) => Ok(!path.exists()),
+        // Err on the side of showing it. A marker we cannot read is not
+        // evidence that anybody read the dialog.
+        Err(_) => Ok(true),
+    }
+}
+
+/// Records that the user acknowledged the disclosure.
+#[tauri::command]
+async fn acknowledge_first_run() -> Result<(), String> {
+    let path = first_run_marker().map_err(|err| err.to_string())?;
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|err| format!("cannot create {}: {err}", parent.display()))?;
+    }
+    tokio::fs::write(&path, b"1\n")
+        .await
+        .map_err(|err| format!("cannot write {}: {err}", path.display()))?;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     tauri::async_runtime::block_on(async { run().await })
 }
@@ -136,10 +171,40 @@ async fn run() -> Result<()> {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![rpc_send, stage_attachment])
+        .invoke_handler(tauri::generate_handler![
+            rpc_send,
+            stage_attachment,
+            first_run_pending,
+            acknowledge_first_run
+        ])
         .run(tauri::generate_context!())
         .context("cannot run the desktop shell")?;
     Ok(())
+}
+
+/// Where eeemail keeps everything: the accounts, the attachment staging area,
+/// and the first-run marker.
+///
+/// Per platform, because this is the difference between an installed app that
+/// starts and one that exits with an error. The Unix-only version of this read
+/// `XDG_DATA_HOME` then `HOME` and gave up if it found neither -- which is the
+/// ordinary state of a Windows session, so every Windows build failed on launch
+/// while the release workflow went on building one.
+fn data_dir() -> Result<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let base = PathBuf::from(std::env::var("APPDATA").context("APPDATA is not set")?);
+    #[cfg(target_os = "macos")]
+    let base = PathBuf::from(std::env::var("HOME").context("HOME is not set")?)
+        .join("Library")
+        .join("Application Support");
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let base = if let Ok(dir) = std::env::var("XDG_DATA_HOME") {
+        PathBuf::from(dir)
+    } else {
+        let home = std::env::var("HOME").context("neither XDG_DATA_HOME nor HOME is set")?;
+        PathBuf::from(home).join(".local").join("share")
+    };
+    Ok(base.join("eeemail"))
 }
 
 /// Where accounts live.
@@ -150,11 +215,16 @@ fn accounts_dir() -> Result<PathBuf> {
     if let Ok(dir) = std::env::var("EEEMAIL_ACCOUNTS_DIR") {
         return Ok(dir.into());
     }
-    let base = if let Ok(dir) = std::env::var("XDG_DATA_HOME") {
-        PathBuf::from(dir)
-    } else {
-        let home = std::env::var("HOME").context("neither XDG_DATA_HOME nor HOME is set")?;
-        PathBuf::from(home).join(".local").join("share")
-    };
-    Ok(base.join("eeemail").join("accounts"))
+    Ok(data_dir()?.join("accounts"))
+}
+
+/// The marker that says the user has seen what this software is.
+///
+/// A file rather than a config value, because the disclosure has to be shown
+/// *before* an account exists and `Config` is per-account. It sits beside the
+/// accounts rather than inside one for the same reason: it outlives any single
+/// account, including deleting them all and starting over -- at which point the
+/// person at the keyboard has already read it.
+fn first_run_marker() -> Result<PathBuf> {
+    Ok(data_dir()?.join("first-run-acknowledged"))
 }

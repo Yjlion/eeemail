@@ -1,9 +1,10 @@
 /**
  * The sidebar: system tags first, then the user's own.
  *
- * The order is [`SYSTEM_TAGS`], which puts Inbox and Holding at the top because
- * they are the two views with mail waiting in them, and Trash last because it
- * is where things go to stop mattering. See `docs/adr/0017-system-tags.md`.
+ * The order is [`SYSTEM_TAGS`], which puts Inbox and Unverified at the top
+ * because they are the two views with mail waiting in them, and Trash last
+ * because it is where things go to stop mattering.
+ * See `docs/adr/0017-system-tags.md`.
  */
 
 import { rpc } from "../client";
@@ -11,13 +12,16 @@ import { state, changed } from "../state";
 import { escapeHtml } from "../html";
 import { SYSTEM_TAGS, TAG_LABELS, type SystemTag } from "../types";
 
-export async function refreshHeldCount(): Promise<void> {
+export async function refreshUnverifiedCount(): Promise<void> {
   try {
-    const ids = (await rpc.call("get_tagged_messages", [state.accountId, "holding"])) as number[];
-    state.heldCount = ids.length;
+    const ids = (await rpc.call("get_tagged_messages", [
+      state.accountId,
+      "unverified",
+    ])) as number[];
+    state.unverifiedCount = ids.length;
   } catch {
     // A count is decoration. Failing to fetch it must not take the sidebar down.
-    state.heldCount = 0;
+    state.unverifiedCount = 0;
   }
 }
 
@@ -26,12 +30,12 @@ export function renderSidebar(el: HTMLElement): void {
 
   const tagButton = (tag: SystemTag) => {
     const active = state.view.kind === "tag" && state.view.tag === tag;
-    // Only Holding gets a count. Every other view is either mail the user has
-    // seen or mail they put somewhere on purpose; Holding is the one that
-    // accumulates without them asking, so it is the one worth surfacing.
+    // Only Unverified gets a count. Every other view is either mail the user
+    // has seen or mail they put somewhere on purpose; Unverified is the one
+    // that accumulates without them asking, so it is the one worth surfacing.
     const badge =
-      tag === "holding" && state.heldCount > 0
-        ? `<span class="count">${state.heldCount}</span>`
+      tag === "unverified" && state.unverifiedCount > 0
+        ? `<span class="count">${state.unverifiedCount}</span>`
         : "";
     return `<button data-tag="${tag}" aria-current="${current(active)}">${TAG_LABELS[tag]}${badge}</button>`;
   };

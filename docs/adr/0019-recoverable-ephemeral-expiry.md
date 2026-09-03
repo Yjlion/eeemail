@@ -1,6 +1,7 @@
 # 0019 — Ephemeral expiry moves a message to Trash for 30 days instead of destroying it
 
-**Status:** Accepted — 2026-09-01 · Supersedes the ephemeral half of [0011](0011-receipts-and-ephemeral.md)
+**Status:** Accepted — 2026-09-01 · Supersedes the ephemeral half of [0011](0011-receipts-and-ephemeral.md) · Amended 2026-09-03 (the window governs the whole
+of `Trash`, and is renamed accordingly)
 
 ## Context
 
@@ -29,11 +30,29 @@ it is the same question every mail client answers with a trash folder.
 Content stays readable and restorable for that window. At purge, the message is
 destroyed for real, by the same path a manual delete uses.
 
-The window is a setting, `Config::EphemeralTrashDays`, not a constant. It is
-applied at setup like the gating default above, because upstream's ephemeral
-tests assert that a fired timer removes the message — and expressing it as a
-setting is better anyway: **zero means destroy immediately**, which is what a
-user who wants a fired timer to mean *gone* would choose, and they can now say
+The window is a setting, `Config::EphemeralTrashDays`, not a constant.
+
+> **Amended 2026-09-03.** Renamed to `Config::TrashPurgeDays`, because it is no
+> longer about ephemeral messages. [0018](0018-contact-gating.md)'s deadline now
+> sweeps unaccepted mail into `Trash` as well, so all three routes in — thrown
+> away by hand, expired by a timer, swept out of `Unverified` — leave on this
+> one deadline. That makes `Trash` the single place in eeemail that destroys
+> mail on a timer, which is worth being true and worth the setting being named
+> for it.
+>
+> `Config` is stored under its snake_case name, so the rename would have
+> orphaned every existing value and dropped those accounts back to the
+> compile-time default of `0` — destroy immediately, the one value a user of
+> this setting would never have chosen. Migration 171 carries it over, and a
+> test asserts that it does.
+>
+> The trash reason gained a third value, `Unaccepted`, so the reading pane can
+> say why a message the user never touched is in the bin.
+
+It is applied at setup like the gating default above, because upstream's
+ephemeral tests assert that a fired timer removes the message — and expressing it
+as a setting is better anyway: **zero means destroy immediately**, which is what
+a user who wants a fired timer to mean *gone* would choose, and they can now say
 so.
 
 **The user can change their mind about the timer**, per message: re-time it,

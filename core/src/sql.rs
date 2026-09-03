@@ -839,11 +839,20 @@ pub async fn housekeeping(context: &Context) -> Result<()> {
             "Housekeeping: cannot prune contact policy: {:#}.", err
         );
     }
-    // eeemail: the two deadlines. Both destroy mail, so both go through
-    // `MsgId::trash` rather than deleting rows, and both run before reference
-    // collection so the blobs they free are reclaimed in this same pass.
-    if let Err(err) = crate::email::gating::purge(context).await {
-        warn!(context, "Housekeeping: cannot purge held mail: {:#}.", err);
+    // eeemail: the two deadlines, in this order. The sweep only *moves* mail,
+    // into `Trash` with a deadline of its own, so it runs first and what it
+    // sweeps gets its trash window starting now. The one case where `purge`
+    // then destroys it in the same pass is a zero trash window, which is
+    // precisely what a zero trash window means.
+    //
+    // Only `ephemeral::purge` destroys, and it goes through `MsgId::trash`
+    // rather than deleting rows, before reference collection so the blobs it
+    // frees are reclaimed in this same pass.
+    if let Err(err) = crate::email::gating::sweep(context).await {
+        warn!(
+            context,
+            "Housekeeping: cannot sweep unaccepted mail: {:#}.", err
+        );
     }
     if let Err(err) = crate::email::ephemeral::purge(context).await {
         warn!(

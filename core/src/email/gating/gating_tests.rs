@@ -23,6 +23,13 @@ fn mail_from(addr: &str, mid: &str) -> Vec<u8> {
     .into_bytes()
 }
 
+/// Sets the sweep window. Tests run on a bare `TestContext`, whose compile-time
+/// default is `0` -- never sweep -- so a test about the deadline has to ask for
+/// one.
+async fn set_window(t: &TestContext, days: i64) -> Result<()> {
+    set_hold_days(t, days).await
+}
+
 async fn recv(t: &TestContext, addr: &str, mid: &str) -> Result<MsgId> {
     t.allow_unencrypted().await?;
     let received = receive_imf(t, &mail_from(addr, mid), false).await?.unwrap();
@@ -64,9 +71,9 @@ async fn test_mail_from_a_stranger_is_held() -> Result<()> {
     assert_eq!(held(&t).await?, vec![msg_id]);
     assert_eq!(
         tags::of_msg(&t, msg_id).await?.system,
-        vec![SystemTag::Holding]
+        vec![SystemTag::Unverified]
     );
-    // Holding is not the inbox, and that is the entire point.
+    // The unverified view is not the inbox, and that is the entire point.
     assert!(tags::messages(&t, SystemTag::Inbox).await?.is_empty());
     Ok(())
 }
@@ -77,7 +84,7 @@ async fn test_held_mail_is_still_downloaded_and_readable() -> Result<()> {
     set_enabled(&t, true).await?;
     let msg_id = recv(&t, "stranger@example.net", "s2@example.net").await?;
 
-    // Holding is a view, not a refusal to fetch: the user must be able to look
+    // Unverified is a view, not a refusal to fetch: the user must be able to look
     // at what arrived before deciding about the sender.
     let msg = crate::message::Message::load_from_db(&t, msg_id).await?;
     // Contains rather than equals: this account never had
@@ -136,7 +143,7 @@ async fn test_release_ignores_contacts_that_are_still_strangers() -> Result<()> 
         .get_from_id();
 
     // Origin is scaled up constantly; most scale-ups do not cross into trusted,
-    // and a release that trusted its call site would empty the holding view.
+    // and a release that trusted its call site would empty the unverified view.
     assert_eq!(release(&t, &[from_id]).await?, 0);
     assert_eq!(held(&t).await?, vec![msg_id]);
     Ok(())
@@ -151,7 +158,7 @@ async fn test_turning_gating_off_releases_everything() -> Result<()> {
     assert_eq!(held(&t).await?.len(), 2);
 
     // Leaving mail in a view the user just switched off would strand it there
-    // until it purged.
+    // until it was swept.
     set_enabled(&t, false).await?;
     assert!(held(&t).await?.is_empty());
 
@@ -161,37 +168,108 @@ async fn test_turning_gating_off_releases_everything() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_held_mail_is_purged_once_the_hold_elapses() -> Result<()> {
+async fn test_held_mail_is_swept_into_trash_once_the_hold_elapses() -> Result<()> {
     let t = TestContext::new_alice().await;
     set_enabled(&t, true).await?;
+    set_window(&t, DEFAULT_HOLD_DAYS).await?;
+    super::super::ephemeral::set_purge_days(&t, 30).await?;
     let msg_id = recv(&t, "stranger@example.net", "s5@example.net").await?;
     assert_eq!(held(&t).await?, vec![msg_id]);
 
     // A day before the deadline, nothing happens.
     SystemTime::shift(std::time::Duration::from_secs(
-        (HOLD_DAYS as u64 - 1) * 86_400,
+        (DEFAULT_HOLD_DAYS as u64 - 1) * 86_400,
     ));
-    assert_eq!(purge(&t).await?, 0);
+    assert_eq!(sweep(&t).await?, 0);
     assert_eq!(held(&t).await?, vec![msg_id]);
 
     SystemTime::shift(std::time::Duration::from_secs(2 * 86_400));
-    assert_eq!(purge(&t).await?, 1);
+    assert_eq!(sweep(&t).await?, 1);
     assert!(held(&t).await?.is_empty());
-    // Discarded, not archived: a tombstone remains to suppress re-download, and
-    // the content is gone.
-    let msg = crate::message::Message::load_from_db(&t, msg_id).await;
-    assert!(msg.is_err() || msg?.get_text().is_empty());
+
+    // Moved, not destroyed. This is the whole point of the change: the deadline
+    // next door had a recoverable window and this one did not, and two
+    // deadlines a few lines apart disagreeing about whether a deadline may
+    // destroy the only copy of a mailbox was not defensible.
+    assert_eq!(
+        tags::of_msg(&t, msg_id).await?.system,
+        vec![SystemTag::Trash]
+    );
+    // `contains` rather than `==`: this context has not had `apply_defaults`
+    // run on it, so upstream's `SubjectInBody` is still on and the subject is
+    // prepended to the text. What matters here is that the content survived.
+    let msg = crate::message::Message::load_from_db(&t, msg_id).await?;
+    assert!(
+        msg.get_text().contains("body"),
+        "the swept message lost its content: {:?}",
+        msg.get_text()
+    );
+
+    // And it says why it is there. "You deleted this" would be a lie about mail
+    // the user never touched.
+    let trashed = super::super::ephemeral::trashed(&t, msg_id).await?.unwrap();
+    assert_eq!(trashed.reason, super::super::ephemeral::Reason::Unaccepted);
+
+    // And restorable by hand, which is the only way back: `release` reads
+    // `held_msgs`, and the sweep dropped that row.
+    super::super::ephemeral::restore(&t, &[msg_id]).await?;
+    assert_eq!(
+        tags::of_msg(&t, msg_id).await?.system,
+        vec![SystemTag::Inbox]
+    );
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_purge_drops_rows_whose_message_is_already_gone() -> Result<()> {
+async fn test_a_zero_window_never_sweeps() -> Result<()> {
     let t = TestContext::new_alice().await;
     set_enabled(&t, true).await?;
+    // Zero means "wait indefinitely", not "sweep now". Someone who wants
+    // unverified mail gone at once turns gating off instead, which releases it
+    // to the inbox where they can delete it.
+    set_window(&t, 0).await?;
+    let msg_id = recv(&t, "stranger@example.net", "s7@example.net").await?;
+
+    SystemTime::shift(std::time::Duration::from_secs(3650 * 86_400));
+    assert_eq!(sweep(&t).await?, 0);
+    assert_eq!(held(&t).await?, vec![msg_id]);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_shortening_the_window_moves_mail_already_waiting() -> Result<()> {
+    let t = TestContext::new_alice().await;
+    set_enabled(&t, true).await?;
+    set_window(&t, 30).await?;
+    super::super::ephemeral::set_purge_days(&t, 30).await?;
+    let msg_id = recv(&t, "stranger@example.net", "s8@example.net").await?;
+
+    SystemTime::shift(std::time::Duration::from_secs(10 * 86_400));
+    assert_eq!(sweep(&t).await?, 0, "not due under a 30-day window");
+
+    // The deadline is `held_at` plus the *current* window, read afresh on every
+    // sweep. Someone shortening this means the mail already waiting, not only
+    // whatever arrives next; a deadline stored at hold time would have silently
+    // outvoted them.
+    set_window(&t, 7).await?;
+    assert_eq!(sweep(&t).await?, 1);
+    assert!(held(&t).await?.is_empty());
+    assert_eq!(
+        tags::of_msg(&t, msg_id).await?.system,
+        vec![SystemTag::Trash]
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_sweep_drops_rows_whose_message_is_already_gone() -> Result<()> {
+    let t = TestContext::new_alice().await;
+    set_enabled(&t, true).await?;
+    set_window(&t, DEFAULT_HOLD_DAYS).await?;
     let msg_id = recv(&t, "stranger@example.net", "s6@example.net").await?;
     crate::message::delete_msgs(&t, &[msg_id]).await?;
 
-    purge(&t).await?;
+    sweep(&t).await?;
     let rows: i64 = t
         .sql
         .query_get_value("SELECT COUNT(*) FROM held_msgs", ())
@@ -246,7 +324,7 @@ async fn test_an_encrypted_reply_from_someone_you_wrote_to_is_not_held() -> Resu
     let received = alice.get_last_msg().await;
     let tags = tags::of_msg(&alice, received.get_id()).await?;
     assert!(
-        !tags.system.contains(&SystemTag::Holding),
+        !tags.system.contains(&SystemTag::Unverified),
         "an encrypted reply from someone the user wrote to was held: {:?}",
         tags.system
     );
@@ -269,7 +347,7 @@ async fn test_verifying_a_stranger_releases_the_mail_they_sent_cold() -> Result<
     let msg_id = recv(&alice, &bob_addr, "cold@example.net").await?;
     assert_eq!(
         tags::of_msg(&alice, msg_id).await?.system,
-        vec![SystemTag::Holding]
+        vec![SystemTag::Unverified]
     );
     let address_row = crate::message::Message::load_from_db(&alice, msg_id)
         .await?

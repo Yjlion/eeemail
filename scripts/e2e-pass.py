@@ -69,7 +69,9 @@ def step1_setup(rpc: Rpc, user: str) -> int:
     check(rpc.call("get_inbox_gating", account_id) is True,
           f"{user}: inbox gating on by default")
     check(rpc.call("get_trash_purge_days", account_id) == 30,
-          f"{user}: recoverable expiry defaults to 30 days")
+          f"{user}: the trash keeps mail for 30 days by default")
+    check(rpc.call("get_unverified_trash_days", account_id) == 30,
+          f"{user}: unverified mail is swept to trash after 30 days by default")
     check(rpc.call("get_encryption_mode", account_id) == "opportunistic",
           f"{user}: encryption is opportunistic by default")
     return account_id
@@ -95,7 +97,7 @@ def step2_send_cc(rpc: Rpc, alice: int, bob: int, workdir: str) -> int:
 
     # Held, not delivered: alice is neither verified nor known to bob, which is
     # step 3's subject. Here it is only how we find the message.
-    held = wait_for(lambda: rpc.call("get_tagged_messages", bob, "holding"),
+    held = wait_for(lambda: rpc.call("get_tagged_messages", bob, "unverified"),
                     "bob to receive alice's message")
     msg_id = held[0]
 
@@ -147,7 +149,7 @@ def step2b_reply_encrypts(rpc: Rpc, alice: int, bob: int) -> None:
 
 def step3_release(rpc: Rpc, bob: int, msg_id: int) -> None:
     tags = rpc.call("get_message_tags", bob, msg_id)
-    check("holding" in tags["system"], "a stranger's mail is held",
+    check("unverified" in tags["system"], "a stranger's mail is held",
           f"tags were {tags['system']}")
     check("inbox" not in tags["system"], "and is kept out of the inbox")
 
@@ -160,14 +162,14 @@ def step3_release(rpc: Rpc, bob: int, msg_id: int) -> None:
 
     def released():
         tags = rpc.call("get_message_tags", bob, msg_id)
-        return "holding" not in tags["system"]
+        return "unverified" not in tags["system"]
 
     wait_for(released, "held mail to be released", timeout=30)
     tags = rpc.call("get_message_tags", bob, msg_id)
     check("inbox" in tags["system"], "accepting the sender moves it to the inbox",
           f"tags were {tags['system']}")
-    check(rpc.call("get_tagged_messages", bob, "holding") == [],
-          "and nothing is left holding")
+    check(rpc.call("get_tagged_messages", bob, "unverified") == [],
+          "and nothing is left unverified")
 
 
 # ---------------------------------------------------------------------------

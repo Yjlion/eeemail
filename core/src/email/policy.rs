@@ -218,16 +218,31 @@ pub async fn apply_defaults(context: &Context) -> Result<()> {
         context.set_config_bool(Config::InboxGating, true).await?;
     }
     if context
-        .get_config_opt(Config::EphemeralTrashDays)
+        .get_config_opt(Config::UnverifiedTrashDays)
         .await?
         .is_none()
     {
-        // A fired timer moves the message to `Trash` and leaves it readable,
-        // rather than destroying it. See
-        // docs/adr/0019-recoverable-ephemeral-expiry.md.
+        // Mail nobody accepted is swept into `Trash` rather than left waiting
+        // forever, which would make the unverified view a second inbox of
+        // exactly the mail nobody wanted. See docs/adr/0018-contact-gating.md.
         context
             .set_config(
-                Config::EphemeralTrashDays,
+                Config::UnverifiedTrashDays,
+                Some(&super::gating::DEFAULT_HOLD_DAYS.to_string()),
+            )
+            .await?;
+    }
+    if context
+        .get_config_opt(Config::TrashPurgeDays)
+        .await?
+        .is_none()
+    {
+        // `Trash` is the only place that destroys mail, and it waits first: a
+        // fired timer or a sweep leaves the message readable and restorable.
+        // See docs/adr/0019-recoverable-ephemeral-expiry.md.
+        context
+            .set_config(
+                Config::TrashPurgeDays,
                 Some(&super::ephemeral::DEFAULT_PURGE_DAYS.to_string()),
             )
             .await?;

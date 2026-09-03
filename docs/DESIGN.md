@@ -25,7 +25,7 @@ The remaining gap is genuinely only the **email-client layer**, and that is what
 | Encryption | **Opportunistic by default** (original Delta Chat behavior), user-settable stricter (E2E-only) or more lenient |
 | Read receipts | **On by default**, globally disableable, with per-contact overrides |
 | Ephemeral | **Off by default** — the user's choice to make. Expiry is recoverable: a configurable window (30 days) in Trash, then purge ([0019](adr/0019-recoverable-ephemeral-expiry.md)) |
-| Inbox gating | **On by default** for eeemail accounts, applied at setup. Unverified, unknown senders wait in Holding for 30 days ([0018](adr/0018-contact-gating.md)) |
+| Inbox gating | **On by default** for eeemail accounts, applied at setup. Unverified, unknown senders wait in Unverified for a configurable window (30 days), then move to Trash ([0018](adr/0018-contact-gating.md)) |
 | At-rest | Database encryption plus **opt-in** per-blob encryption, off by default ([0020](adr/0020-blobdir-encryption.md)) |
 | Structured email | Parse [SML](https://structured.email/) for everyone; act on it only for trusted senders ([0016](adr/0016-structured-email.md)) |
 | First client | Desktop: Tauri v2 + web frontend |
@@ -80,9 +80,9 @@ Verified against current `chatmail/core` `main`:
 
 9. **The email UI itself.** Message list, threaded reading pane, composer with subject/CC/BCC/attachments, tag sidebar, search, contact management with verification badges.
 
-10. **A mailbox that organizes itself.** Most people do not want to file mail. Inbox, Sent, Drafts, Archive, Trash and Holding are system tags that exist without setup — derived from message state where core already owns it, stored only where they carry a deadline. User tags sit on top. See [ADR 0017](adr/0017-system-tags.md).
+10. **A mailbox that organizes itself.** Most people do not want to file mail. Inbox, Sent, Drafts, Archive, Trash and Unverified are system tags that exist without setup — derived from message state where core already owns it, stored only where they carry a deadline. User tags sit on top. See [ADR 0017](adr/0017-system-tags.md).
 
-11. **Contact gating.** Mail from a sender who is neither verified nor known does not reach the inbox; it waits in Holding for 30 days and is then discarded. Core's contact-request machinery (`Blocked::Request`) is the substrate. See [ADR 0018](adr/0018-contact-gating.md).
+11. **Contact gating.** Mail from a sender who is neither verified nor known does not reach the inbox; it waits in Unverified for a configurable window and is then swept into Trash, which is the one place that destroys. Core's contact-request machinery (`Blocked::Request`) is the substrate. See [ADR 0018](adr/0018-contact-gating.md).
 
 12. **Structured email.** Parse [SML](https://structured.email/) `application/ld+json` parts, and the Schema.org-for-Email `<script>` block deployed senders actually emit. Act on it only for trusted senders. See [ADR 0016](adr/0016-structured-email.md).
 
@@ -103,7 +103,7 @@ eeemail/
 │       │   ├── threading.rs  # threading over References/In-Reply-To
 │       │   ├── labels.rs     # tags + archive, synced by name
 │       │   ├── tags.rs       # system tags, derived and stored (ADR 0017)
-│       │   ├── gating.rs     # holding view for unverified senders (ADR 0018)
+│       │   ├── gating.rs     # the unverified view, and its sweep (ADR 0018)
 │       │   ├── ephemeral.rs  # recoverable expiry into Trash (ADR 0019)
 │       │   ├── structured.rs # SML / Schema.org-for-Email (ADR 0016)
 │       │   ├── search.rs     # search over body, subject, recipients, tags
@@ -149,10 +149,14 @@ contact_policy(contact_id, mdn_enabled, ephemeral_secs, encryption_mode)
 server_retention(msg_id, delete_at)
 msg_undelivered(msg_id, addr)                             -- dropped for want of a key
 -- 169 (Phase 11)
-held_msgs(msg_id, held_at, purge_at)                      -- ADR 0018
+held_msgs(msg_id, held_at)                                -- ADR 0018; purge_at dropped in 171
 trashed_msgs(msg_id, trashed_at, purge_at, reason)        -- ADR 0019
 -- 170 (Phase 14)
 structured_data(msg_id, seq, json, trusted, source)       -- ADR 0016
+-- 171 (v0.3.0)
+-- `Holding` label renamed `Unverified`; `ephemeral_trash_days` config key
+-- renamed `trash_purge_days`; `held_msgs.purge_at` dropped, because the
+-- deadline is now `held_at` plus the current setting, read at sweep time.
 ```
 
 Tags rather than folders means `msg_labels` is many-to-many by construction: a
@@ -162,7 +166,7 @@ is this thread in?" has no good answer.
 **Not every system tag is a row.** `Inbox`, `Sent` and `Drafts` are derived from
 `MessageState`, direction and the absence of a stored system tag, because core
 already owns that state and storing it would create a second source of truth.
-`Archive`, `Trash` and `Holding` are rows, because each is either a user action
+`Archive`, `Trash` and `Unverified` are rows, because each is either a user action
 that must survive a failed hook or carries a purge deadline. See
 [ADR 0017](adr/0017-system-tags.md).
 
@@ -321,7 +325,7 @@ Two of those reverse earlier decisions, and both reversals are the same shape: *
 `server/deploy/` is recorded as **deliberately not built**: `compose/` covers testing application functionality, and DKIM/ACME/MTA-STS/DNS need a real domain. Configuration nobody has run is worse than none, because it looks like a deployment path.
 
 **Phase 11 — System tags, gating, recoverable ephemeral.** *(engine)*
-`core/src/email/tags.rs`, `gating.rs` and `ephemeral.rs`, migration 169. `Trash` and `Holding` join `Archive` as reserved rows; `Inbox`, `Sent` and `Drafts` are derived. One resolver returns a message's whole tag set so a caller asks once. Gating hooks into the receive site Phases 1–3 already patched, so it costs no new upstream patch. `SearchQuery` takes a `tag` filter, replacing the `archived: Option<bool>` special case, so every list view is one query.
+`core/src/email/tags.rs`, `gating.rs` and `ephemeral.rs`, migration 169. `Trash` and `Unverified` join `Archive` as reserved rows; `Inbox`, `Sent` and `Drafts` are derived. One resolver returns a message's whole tag set so a caller asks once. Gating hooks into the receive site Phases 1–3 already patched, so it costs no new upstream patch. `SearchQuery` takes a `tag` filter, replacing the `archived: Option<bool>` special case, so every list view is one query.
 
 Ephemeral expiry needs **one narrow patch to upstream's `delete_expired_messages`**, which diverts a first-time expiry into `Trash` with a purge deadline and leaves everything else alone. Recorded in [`fork-patches.md`](fork-patches.md).
 
@@ -371,7 +375,7 @@ Two properties are load-bearing and each has a test guarding it. **Dedup hashes 
 
 1. **Account setup.** Two accounts configured against real IMAP and SMTP, asserting that eeemail's defaults actually landed — gating on, expiry recoverable at 30 days, encryption opportunistic. `policy::apply_defaults` refuses a configured account, so this also pins the call *before* the transport is added.
 2. **A Cc'd message.** Subject, `To`, `Cc` and one attachment survive the round trip to a third real mailbox. Two accounts cannot tell a dropped `Cc` from a delivered one, which is why the server provisions `carol`.
-3. **Held mail reaches the inbox.** A stranger's mail lands in Holding, stays readable, and moves to the inbox when the sender is accepted. Runs *before* step 3b: writing to someone makes them known, which releases their held mail on its own.
+3. **Held mail reaches the inbox.** A stranger's mail lands in Unverified, stays readable, and moves to the inbox when the sender is accepted. Runs *before* step 3b: writing to someone makes them known, which releases their held mail on its own.
 4. **A timer fires and the message survives it.** Core's own `ephemeral_loop` expires a message into Trash; it stays readable and restores. This is ADR 0019's whole point, so nothing simulates it.
 5. **Encryption at rest.** Blob encryption refuses to run on a cleartext database, then a passphrase and a full blobdir migration are checked through `get_at_rest_protection`.
 6. **Screenshots.** Regenerated from fixtures and byte-stable; touches no server.

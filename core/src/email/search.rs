@@ -38,7 +38,7 @@ pub struct SearchQuery {
     /// Restrict to messages carrying this label.
     pub label: Option<LabelId>,
 
-    /// Restrict to one system tag: the inbox, the holding view, sent, drafts,
+    /// Restrict to one system tag: the inbox, the unverified view, sent, drafts,
     /// the archive or the trash.
     ///
     /// Replaced an `archived: Option<bool>` flag, which could express only two

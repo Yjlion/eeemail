@@ -12,7 +12,7 @@ use super::super::tags::{self, SystemTag};
 
 async fn set_purge_days(context: &Context, days: i64) -> Result<()> {
     context
-        .set_config(Config::EphemeralTrashDays, Some(&days.to_string()))
+        .set_config(Config::TrashPurgeDays, Some(&days.to_string()))
         .await
 }
 

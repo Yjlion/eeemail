@@ -139,14 +139,14 @@ const ROWS: Row[] = [
     encrypted: false,
     verified: false,
     hasAttachment: false,
-    tags: ["holding"],
+    tags: ["unverified"],
     body: "Hi, I saw your post and wanted to ask whether it is still available.",
     to: ["you@example.org"],
     cc: [],
     parent: null,
     // Deliberately on the held message: a stranger's structured data is
     // exactly the case that must render inert, and putting it here means the
-    // existing `holding` screenshot shows it.
+    // existing `unverified` screenshot shows it.
     structured: [
       {
         seq: 0,
@@ -174,7 +174,7 @@ const ROWS: Row[] = [
     encrypted: false,
     verified: false,
     hasAttachment: false,
-    tags: ["holding"],
+    tags: ["unverified"],
     body: "CONGRATULATIONS you have been selected as our monthly winner.",
     to: ["you@example.org"],
     cc: [],
@@ -215,6 +215,27 @@ const ROWS: Row[] = [
     parent: null,
   },
   {
+    // Swept out of Unverified rather than expired or thrown away. The third
+    // route into the trash needs a fixture of its own, because it is the one
+    // the reading pane has to explain -- nobody remembers doing this, since
+    // nobody did it.
+    msgId: 111,
+    subject: "Following up on my last message",
+    preview: "Nobody accepted this sender, so it waited and then moved here.",
+    from: "unknown@elsewhere.example",
+    fromAddr: "unknown@elsewhere.example",
+    timestamp: NOW - 34 * DAY,
+    unread: false,
+    encrypted: false,
+    verified: false,
+    hasAttachment: false,
+    tags: ["trash"],
+    body: "Just checking whether you saw my earlier note.",
+    to: ["you@example.org"],
+    cc: [],
+    parent: null,
+  },
+  {
     msgId: 110,
     subject: "Your parcel is on its way",
     preview: "Dispatched today. Expected between Thursday and Friday.",
@@ -250,7 +271,7 @@ const ROWS: Row[] = [
 
 const LABELS = [
   { id: 1, name: "Archive", color: null, isSystem: true },
-  { id: 2, name: "Holding", color: null, isSystem: true },
+  { id: 2, name: "Unverified", color: null, isSystem: true },
   { id: 3, name: "Trash", color: null, isSystem: true },
   { id: 10, name: "Accounts", color: "#2563eb", isSystem: false },
   { id: 11, name: "Reading list", color: "#15803d", isSystem: false },
@@ -311,7 +332,7 @@ export class DemoRpc {
         return LABELS;
       case "get_inbox_gating":
         return true;
-      case "get_hold_days":
+      case "get_unverified_trash_days":
         return 30;
       case "get_trash_purge_days":
         return 30;
@@ -380,9 +401,13 @@ export class DemoRpc {
       }
       case "get_trashed_message": {
         const r = rowOf(arg<number>(1));
-        return r?.tags.includes("trash")
-          ? { trashedAt: NOW - 6 * DAY, purgeAt: NOW + 24 * DAY, reason: "expired" }
-          : null;
+        if (!r?.tags.includes("trash")) return null;
+        // 111 is the swept one. The reason is what decides which sentence the
+        // reading pane shows, and "you deleted this" would be a lie about mail
+        // the user never touched.
+        return r.msgId === 111
+          ? { trashedAt: NOW - 4 * DAY, purgeAt: NOW + 26 * DAY, reason: "unaccepted" }
+          : { trashedAt: NOW - 6 * DAY, purgeAt: NOW + 24 * DAY, reason: "expired" };
       }
       case "get_message_ephemeral_timer":
         return null;

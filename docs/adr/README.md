@@ -2,7 +2,9 @@
 
 Each ADR records one decision, the context that forced it, and the consequences
 we accepted. They are immutable once accepted: to change a decision, add a new
-ADR that supersedes the old one rather than editing history.
+ADR that supersedes the old one, or a dated amendment block inside the old one
+where the decision holds and only a detail moved. Either way the original text
+stays, so a reader can see what was decided and what changed.
 
 Full design: [`../DESIGN.md`](../DESIGN.md) ·
 Build & fork workflow: [`../development.md`](../development.md) ·
@@ -26,10 +28,13 @@ Testing: [`../testing.md`](../testing.md)
 | [0014](0014-recipient-sets-on-the-wire.md) | A message carries its own recipients; Cc/Bcc use the same key path as members | Accepted |
 | [0015](0015-at-rest-and-backup.md) | Database encryption is reported as partial, because the blobdir holds cleartext mail | Accepted · completed by [0020](0020-blobdir-encryption.md) |
 | [0016](0016-structured-email.md) | Structured email is parsed for everyone and acted on only for trusted senders | Accepted |
-| [0017](0017-system-tags.md) | System tags: derived where possible, stored where they must be | Accepted |
-| [0018](0018-contact-gating.md) | Mail from strangers is held, not delivered, and expires if never accepted | Accepted |
-| [0019](0019-recoverable-ephemeral-expiry.md) | Ephemeral expiry moves a message to Trash for 30 days instead of destroying it | Accepted |
+| [0017](0017-system-tags.md) | System tags: derived where possible, stored where they must be | Accepted · amended 2026-09-03 (`Holding` → `Unverified`) |
+| [0018](0018-contact-gating.md) | Mail from strangers is held, not delivered, and expires if never accepted | Accepted · amended 2026-09-03 (swept to Trash, window is a setting) |
+| [0019](0019-recoverable-ephemeral-expiry.md) | Ephemeral expiry moves a message to Trash for 30 days instead of destroying it | Accepted · amended 2026-09-03 (the window governs all of Trash) |
 | [0020](0020-blobdir-encryption.md) | The blobdir is encrypted with the database key, opt-in and off by default | Accepted |
+| [0021](0021-autocrypt-key-contacts.md) | An `Autocrypt:` header makes a key-contact, reversing an upstream `v2.59` decision | Accepted |
+| [0022](0022-desktop-distribution.md) | eeemail ships as a platform installer, not as a folder of executables | Accepted |
+| [0023](0023-first-launch-disclosure.md) | The application says what it is, before it asks for a mail password | Accepted |
 
 ## Deferred
 

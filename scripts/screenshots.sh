@@ -65,11 +65,18 @@ echo "capturing"
 shoot inbox          "#/tag/inbox"
 shoot reading        "#/tag/inbox/101"
 shoot thread         "#/tag/inbox/102"
-shoot holding        "#/tag/holding/106"
+shoot unverified     "#/tag/unverified/106"
 shoot structured     "#/tag/inbox/110"
 shoot trash          "#/tag/trash/109"
+# The other way into the trash: swept out of Unverified, which is the one the
+# reading pane has to explain because the user does not remember doing it.
+shoot trash-swept    "#/tag/trash/111"
 shoot composer       "#/screen/composer"
 shoot contacts       "#/screen/contacts"
 shoot settings       "#/screen/settings"
+# The first-launch disclosure, over the inbox it opens in front of. A route
+# rather than a screen: it changes no state, so it falls through to the default
+# view and the dialog opens on top. See `desktop/src/shell.ts`.
+shoot first-run      "#/first-run"
 
 echo "wrote $(ls -1 "$OUT"/*.png | wc -l) images to $OUT/"

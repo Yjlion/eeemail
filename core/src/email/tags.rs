@@ -13,10 +13,10 @@
 //! * [`SystemTag::Inbox`], [`SystemTag::Sent`] and [`SystemTag::Drafts`] are
 //!   **derived** from `MessageState` and direction. No rows, so nothing to keep
 //!   consistent and nothing to migrate.
-//! * [`SystemTag::Archive`], [`SystemTag::Trash`] and [`SystemTag::Holding`] are
+//! * [`SystemTag::Archive`], [`SystemTag::Trash`] and [`SystemTag::Unverified`] are
 //!   **stored**, because each is either a user action that must survive a failed
 //!   hook (`Archive`, see [ADR 0009]) or carries a purge deadline (`Trash` in
-//!   [`super::ephemeral`], `Holding` in [`super::gating`]).
+//!   [`super::ephemeral`], `Unverified` in [`super::gating`]).
 //!
 //! The point of the whole arrangement is that the user files nothing and still
 //! has a working mailbox. See [ADR 0017].
@@ -30,7 +30,7 @@ use anyhow::Result;
 use crate::context::Context;
 use crate::message::{MessageState, MsgId};
 
-use super::labels::{self, ARCHIVE, HOLDING, Label, TRASH};
+use super::labels::{self, ARCHIVE, Label, TRASH, UNVERIFIED};
 
 /// A tag every account has, without the user creating anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -38,7 +38,7 @@ pub enum SystemTag {
     /// Incoming mail that has not been archived, held or trashed.
     Inbox,
     /// Mail from a sender who is neither verified nor known.
-    Holding,
+    Unverified,
     /// Outgoing mail that has left the drafts state.
     Sent,
     /// Unsent outgoing mail.
@@ -52,11 +52,11 @@ pub enum SystemTag {
 impl SystemTag {
     /// Every system tag, in the order a sidebar should show them.
     ///
-    /// Inbox and Holding lead because they are the two views with mail waiting
+    /// Inbox and Unverified lead because they are the two views with mail waiting
     /// in them; Trash is last because it is where things go to stop mattering.
     pub const ALL: [SystemTag; 6] = [
         SystemTag::Inbox,
-        SystemTag::Holding,
+        SystemTag::Unverified,
         SystemTag::Sent,
         SystemTag::Drafts,
         SystemTag::Archive,
@@ -71,7 +71,7 @@ impl SystemTag {
         match self {
             SystemTag::Archive => Some(ARCHIVE),
             SystemTag::Trash => Some(TRASH),
-            SystemTag::Holding => Some(HOLDING),
+            SystemTag::Unverified => Some(UNVERIFIED),
             SystemTag::Inbox | SystemTag::Sent | SystemTag::Drafts => None,
         }
     }
@@ -82,7 +82,7 @@ impl SystemTag {
     pub fn as_str(self) -> &'static str {
         match self {
             SystemTag::Inbox => "inbox",
-            SystemTag::Holding => "holding",
+            SystemTag::Unverified => "unverified",
             SystemTag::Sent => "sent",
             SystemTag::Drafts => "drafts",
             SystemTag::Archive => "archive",
@@ -157,7 +157,7 @@ async fn derived(
         // Expressed as "no stored system tag" rather than as a list, so a
         // system tag added later cannot forget to remove its mail from here.
         SystemTag::Inbox => is_incoming(state) && stored.is_empty(),
-        SystemTag::Archive | SystemTag::Trash | SystemTag::Holding => false,
+        SystemTag::Archive | SystemTag::Trash | SystemTag::Unverified => false,
     })
 }
 
@@ -207,7 +207,9 @@ pub async fn messages(context: &Context, tag: SystemTag) -> Result<Vec<MsgId>> {
         SystemTag::Inbox => {
             format!("{base} AND m.state>=?2 AND m.state<?3 AND NOT {filed} {order}")
         }
-        SystemTag::Archive | SystemTag::Trash | SystemTag::Holding => unreachable!("stored above"),
+        SystemTag::Archive | SystemTag::Trash | SystemTag::Unverified => {
+            unreachable!("stored above")
+        }
     };
 
     context

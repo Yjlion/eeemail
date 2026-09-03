@@ -1074,8 +1074,14 @@ impl Context {
             self.get_config_bool(Config::InboxGating).await?.to_string(),
         );
         res.insert(
-            "ephemeral_trash_days",
-            self.get_config_int(Config::EphemeralTrashDays)
+            "unverified_trash_days",
+            self.get_config_int(Config::UnverifiedTrashDays)
+                .await?
+                .to_string(),
+        );
+        res.insert(
+            "trash_purge_days",
+            self.get_config_int(Config::TrashPurgeDays)
                 .await?
                 .to_string(),
         );

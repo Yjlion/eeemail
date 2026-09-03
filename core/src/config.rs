@@ -471,9 +471,9 @@ pub enum Config {
     ///
     /// **On by default.** A gate the user has to find and enable protects only
     /// the people who already knew to look for it. Held mail is downloaded and
-    /// decrypted normally -- `Holding` is a view, not a refusal to fetch -- and
-    /// is discarded after `email::gating::HOLD_DAYS` if the sender is never
-    /// accepted.
+    /// decrypted normally -- `Unverified` is a view, not a refusal to fetch --
+    /// and is swept into `Trash` after [`Config::UnverifiedTrashDays`] if the
+    /// sender is never accepted.
     ///
     /// eeemail turns this **on** for its own accounts in
     /// `email::policy::apply_defaults`, and keeps upstream's default here.
@@ -486,8 +486,34 @@ pub enum Config {
     #[strum(props(default = "0"))]
     InboxGating,
 
-    /// eeemail: how many days an expired or deleted message stays recoverable
-    /// in `Trash` before it is destroyed.
+    /// eeemail: how many days mail from an unverified, unknown sender waits in
+    /// the `Unverified` view before it is swept into `Trash`.
+    ///
+    /// **0 means never sweep**, not sweep at once. Someone who wants unverified
+    /// mail gone immediately turns [`Config::InboxGating`] off, which puts it in
+    /// the inbox where they can delete it; someone who sets this to zero is
+    /// asking for the view to hold indefinitely.
+    ///
+    /// The compile-time default is `0` for the same reason `InboxGating` ships
+    /// off: upstream's tests assert that a stranger's mail reaches the inbox and
+    /// stays there. `email::policy::apply_defaults` sets it to
+    /// `email::gating::DEFAULT_HOLD_DAYS` for eeemail accounts.
+    ///
+    /// The deadline is this window measured from when the message was held, read
+    /// afresh on every sweep, so changing it moves mail that is already waiting.
+    ///
+    /// See docs/adr/0018-contact-gating.md.
+    #[strum(props(default = "0"))]
+    UnverifiedTrashDays,
+
+    /// eeemail: how many days a message stays recoverable in `Trash` before it
+    /// is destroyed.
+    ///
+    /// Governs every route into `Trash` -- thrown away by hand, an ephemeral
+    /// timer that fired, and mail swept out of the unverified view -- because
+    /// `Trash` is the only place in eeemail that destroys mail. Named
+    /// `EphemeralTrashDays` until v0.3.0, when the unverified sweep started
+    /// arriving here too; migration 171 carries the stored value over.
     ///
     /// **0 means destroy immediately**, which is upstream's behaviour and the
     /// compile-time default for the same reason `InboxGating` is off here:
@@ -500,7 +526,7 @@ pub enum Config {
     ///
     /// See docs/adr/0019-recoverable-ephemeral-expiry.md.
     #[strum(props(default = "0"))]
-    EphemeralTrashDays,
+    TrashPurgeDays,
 
     /// eeemail: ephemeral timer applied to a conversation when the first
     /// message is sent to it, in seconds. 0 disables it.

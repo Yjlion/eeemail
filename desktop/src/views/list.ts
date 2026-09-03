@@ -45,7 +45,7 @@ export async function renderList(el: HTMLElement): Promise<void> {
   const ids = state.messageIds.slice(0, PAGE);
   if (ids.length === 0) {
     el.innerHTML = `<div class="empty">${
-      state.view.kind === "tag" && state.view.tag === "holding"
+      state.view.kind === "tag" && state.view.tag === "unverified"
         ? "Nothing waiting. Mail from people you have not accepted appears here."
         : "Nothing here"
     }</div>`;
@@ -76,8 +76,8 @@ export async function renderList(el: HTMLElement): Promise<void> {
           ${row.verified ? `<span class="badge verified">verified</span>` : ""}
           ${row.hasAttachment ? `<span class="badge">attachment</span>` : ""}
           ${
-            row.tags.includes("holding")
-              ? `<span class="badge warn-badge">holding</span>`
+            row.tags.includes("unverified")
+              ? `<span class="badge warn-badge">unverified</span>`
               : ""
           }
           ${row.tags.includes("trash") ? `<span class="badge warn-badge">trash</span>` : ""}

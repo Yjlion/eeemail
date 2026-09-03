@@ -225,7 +225,7 @@ impl ContactId {
             })
             .await?;
         // eeemail: becoming known is one of the two ways a sender's mail leaves
-        // the holding view. `release` re-checks each contact, because origin is
+        // the unverified view. `release` re-checks each contact, because origin is
         // scaled up constantly and most scale-ups do not cross the threshold.
         // See docs/adr/0018-contact-gating.md.
         crate::email::gating::release(context, ids)
@@ -2069,8 +2069,8 @@ pub(crate) async fn mark_contact_id_as_verified(
             Ok(())
         })
         .await?;
-    // eeemail: verification is the other way a sender's mail leaves the holding
-    // view. See docs/adr/0018-contact-gating.md.
+    // eeemail: verification is the other way a sender's mail leaves the
+    // unverified view. See docs/adr/0018-contact-gating.md.
     crate::email::gating::release(context, &[contact_id])
         .await
         .context("failed to release held mail")

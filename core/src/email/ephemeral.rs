@@ -48,7 +48,7 @@ use super::labels::{self, TRASH};
 /// How long a trashed message stays recoverable, for a fresh eeemail account.
 ///
 /// Applied by [`super::policy::apply_defaults`] rather than being the
-/// compile-time default of [`Config::EphemeralTrashDays`], because upstream's
+/// compile-time default of [`Config::TrashPurgeDays`], because upstream's
 /// ephemeral tests assert that a fired timer removes the message. See
 /// `docs/adr/0012-rpc-and-cli.md` for why that distinction is worth keeping.
 pub const DEFAULT_PURGE_DAYS: i64 = 30;
@@ -57,11 +57,25 @@ pub const DEFAULT_PURGE_DAYS: i64 = 30;
 ///
 /// `0` means destroy immediately, which is upstream's behaviour and what a user
 /// who wants a fired timer to mean *gone* would choose.
+///
+/// This governs **everything** in `Trash`, not only expired mail: a message the
+/// user threw away, one whose ephemeral timer fired, and one swept out of the
+/// unverified view all arrive here and leave on the same deadline. `Trash` is
+/// the only place in eeemail that destroys mail, so it is the only place with a
+/// deadline the user has to understand.
 pub async fn purge_days(context: &Context) -> Result<i64> {
-    Ok(context
-        .get_config_int(Config::EphemeralTrashDays)
-        .await?
-        .into())
+    Ok(context.get_config_int(Config::TrashPurgeDays).await?.into())
+}
+
+/// Sets how long a trashed message stays recoverable, in days.
+///
+/// Does not retroactively re-time what is already in the trash: each message
+/// keeps the deadline it was given when it arrived there, so a countdown the
+/// user is watching cannot move under them.
+pub async fn set_purge_days(context: &Context, days: i64) -> Result<()> {
+    context
+        .set_config(Config::TrashPurgeDays, Some(&days.max(0).to_string()))
+        .await
 }
 
 async fn purge_secs(context: &Context) -> Result<i64> {
@@ -78,12 +92,15 @@ pub enum Reason {
     Deleted = 0,
     /// Its ephemeral timer fired.
     Expired = 1,
+    /// It was held from an unverified sender and never accepted.
+    Unaccepted = 2,
 }
 
 impl Reason {
     fn from_i64(value: i64) -> Self {
         match value {
             1 => Reason::Expired,
+            2 => Reason::Unaccepted,
             _ => Reason::Deleted,
         }
     }
@@ -159,7 +176,12 @@ pub async fn trash(context: &Context, msgs: &[MsgId]) -> Result<()> {
     Ok(())
 }
 
-async fn to_trash(context: &Context, msgs: &[MsgId], reason: Reason, now: i64) -> Result<()> {
+pub(crate) async fn to_trash(
+    context: &Context,
+    msgs: &[MsgId],
+    reason: Reason,
+    now: i64,
+) -> Result<()> {
     if msgs.is_empty() {
         return Ok(());
     }
@@ -169,7 +191,11 @@ async fn to_trash(context: &Context, msgs: &[MsgId], reason: Reason, now: i64) -
     // and reaches the same conclusion on its own.
     let sync = match reason {
         Reason::Deleted => Sync::Sync,
-        Reason::Expired => Sync::Nosync,
+        // A timer firing is not an intent worth carrying, because every device
+        // runs the same timer and reaches the same conclusion on its own; nor is
+        // a sweep, for the same reason and because the hold it ends was never
+        // synced either.
+        Reason::Expired | Reason::Unaccepted => Sync::Nosync,
     };
     labels::set_ext(context, msgs, &trash_label, true, sync).await?;
 

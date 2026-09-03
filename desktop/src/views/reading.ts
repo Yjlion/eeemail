@@ -2,8 +2,9 @@
  * The reading pane.
  *
  * Deliberately does not paper over the engine: encryption state, undelivered
- * recipients, holding, expiry and lost raw MIME are shown as they are, because
- * they are exactly what an encrypted mail client has to be honest about.
+ * recipients, the unverified view, expiry and lost raw MIME are shown as they
+ * are, because they are exactly what an encrypted mail client has to be honest
+ * about.
  *
  * Message HTML renders only inside a sandboxed frame, never in the app
  * document. See `docs/adr/0013-desktop-ui.md`.
@@ -23,7 +24,7 @@ import type {
   TrashedMessage,
 } from "../types";
 import { refreshList } from "./list";
-import { refreshHeldCount } from "./sidebar";
+import { refreshUnverifiedCount } from "./sidebar";
 
 function days(from: number, to: number): number {
   return Math.max(0, Math.round((to - from) / 86_400));
@@ -86,7 +87,7 @@ export async function renderReading(el: HTMLElement): Promise<void> {
       .map((r) => escapeHtml(r.name ? `${r.name} <${r.addr}>` : r.addr))
       .join(", ");
 
-  const held = tags.system.includes("holding");
+  const held = tags.system.includes("unverified");
   const now = Math.floor(Date.now() / 1000);
 
   const notices: string[] = [];
@@ -94,7 +95,7 @@ export async function renderReading(el: HTMLElement): Promise<void> {
     notices.push(
       `<div class="notice warn">
          <strong>This sender is not verified and not in your contacts.</strong>
-         It is waiting here rather than in your inbox, and will be discarded if
+         It is waiting here rather than in your inbox, and moves to the trash if
          you do nothing. <button class="inline" data-act="accept">Accept sender</button>
        </div>`,
     );
@@ -105,7 +106,9 @@ export async function renderReading(el: HTMLElement): Promise<void> {
          ${
            trashed.reason === "expired"
              ? "This message's timer expired."
-             : "You moved this message to the trash."
+             : trashed.reason === "unaccepted"
+               ? "This came from a sender you never accepted, and waited in Unverified until its window ran out."
+               : "You moved this message to the trash."
          }
          It is still here for ${days(now, trashed.purgeAt)} more days.
          <button class="inline" data-act="restore">Restore</button>
@@ -363,7 +366,7 @@ function wireActions(
 
   const after = async () => {
     await refreshList();
-    await refreshHeldCount();
+    await refreshUnverifiedCount();
     state.selectedMsgId = null;
     changed();
   };
@@ -386,7 +389,7 @@ function wireActions(
           return after();
         case "accept": {
           // Accepting the sender, not the message: past and future mail from
-          // them leaves the holding view together.
+          // them leaves the unverified view together.
           const chatId = msg.chatId;
           await rpc.call("accept_chat", [account, chatId]);
           return after();
