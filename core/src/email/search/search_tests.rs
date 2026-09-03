@@ -3,6 +3,7 @@
 use anyhow::Result;
 
 use super::*;
+use crate::config::Config;
 use crate::email::labels;
 use crate::receive_imf::receive_imf;
 use crate::test_utils::TestContext;
@@ -72,13 +73,24 @@ async fn test_matches_the_subject() -> Result<()> {
 
     assert_eq!(search(&t, &SearchQuery::text("quarterly")).await?, vec![a]);
 
-    // Upstream's search_msgs happens to find this too, but not because it
-    // searches subjects: `mimeparser` prepends the subject into the body text
-    // of classic mail, so `msgs.txt` literally reads "quarterly numbers - body".
-    // That is a chat-app accommodation we should not rely on -- it does not
-    // apply to mail from another Delta Chat or eeemail client, where the
-    // subject stays a subject.
+    // Upstream's search_msgs finds this too, but not because it searches
+    // subjects: with `SubjectInBody` on -- upstream's default, still in force
+    // here -- `mimeparser` prepends the subject into the body text of classic
+    // mail, so `msgs.txt` literally reads "quarterly numbers - body".
     assert_eq!(t.search_msgs(None, "quarterly").await?, vec![a]);
+
+    // Turn that off, as `email::policy::apply_defaults` does for every eeemail
+    // account, and the difference becomes visible: ours still finds the message
+    // because it searches the subject column, upstream's no longer finds it at
+    // all. This is the test that would have caught the body corruption in the
+    // first place -- it was written asserting the opposite. See issue #8.
+    t.set_config_bool(Config::SubjectInBody, false).await?;
+    let b = recv(&t, "c@x", "annual figures", "bob@example.net", "body").await?;
+    assert_eq!(search(&t, &SearchQuery::text("annual")).await?, vec![b]);
+    assert!(
+        t.search_msgs(None, "annual").await?.is_empty(),
+        "the subject leaked into the body"
+    );
     Ok(())
 }
 

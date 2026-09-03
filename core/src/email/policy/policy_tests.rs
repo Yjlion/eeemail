@@ -578,3 +578,43 @@ async fn test_apply_defaults_never_overwrites_an_explicit_choice() -> Result<()>
     );
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_apply_defaults_keeps_the_subject_out_of_the_body() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let ctx = crate::context::ContextBuilder::new(dir.path().join("db"))
+        .open()
+        .await?;
+
+    // Upstream prepends the subject into the body of classic mail, which suits
+    // a chat bubble with no subject line.
+    assert!(ctx.get_config_bool(Config::SubjectInBody).await?);
+    apply_defaults(&ctx).await?;
+    assert!(!ctx.get_config_bool(Config::SubjectInBody).await?);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_the_subject_stops_being_written_into_the_body() -> Result<()> {
+    const SECOND: &[u8] = b"From: alice@example.org\r\n\
+To: bob@example.net\r\n\
+Subject: hello\r\n\
+Message-ID: <b@x>\r\n\
+Date: Mon, 31 Aug 2026 12:00:00 +0000\r\n\
+\r\n\
+body\r\n";
+
+    let t = TestContext::new_alice().await;
+    t.allow_unencrypted().await?;
+
+    // Upstream's default, which this account still has: the subject is written
+    // into the body, so this is what a reply quotes and what export writes out.
+    receive_imf(&t, RAW, false).await?;
+    assert_eq!(t.get_last_msg().await.get_text(), "hello \u{2013} body");
+
+    // eeemail's, applied at setup. The subject stays a subject.
+    t.set_config_bool(Config::SubjectInBody, false).await?;
+    receive_imf(&t, SECOND, false).await?;
+    assert_eq!(t.get_last_msg().await.get_text(), "body");
+    Ok(())
+}
