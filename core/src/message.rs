@@ -11,7 +11,8 @@ use humansize::BINARY;
 use humansize::format_size;
 use num_traits::FromPrimitive;
 use serde::{Deserialize, Serialize};
-use tokio::{fs, io};
+use tokio::fs;
+use tokio::io::AsyncWriteExt as _;
 
 use crate::blob::BlobObject;
 use crate::chat::{Chat, ChatId, ChatIdBlocked, ChatVisibility, send_msg};
@@ -691,15 +692,25 @@ impl Message {
     }
 
     /// Save file copy at the user-provided path.
+    ///
+    /// eeemail: read through `email::blobcrypt` rather than copied
+    /// byte-for-byte. The read is transparent, but a plain copy is not: with
+    /// blob encryption on it would hand the user an `EEEBLOB1` container
+    /// instead of their attachment, which is the one place a stored blob leaves
+    /// the blobdir without being interpreted.
     pub async fn save_file(&self, context: &Context, path: &Path) -> Result<()> {
         let path_src = self.get_file(context).context("No file")?;
-        let mut src = fs::OpenOptions::new().read(true).open(path_src).await?;
+        let bytes = crate::email::blobcrypt::read(context, &path_src).await?;
+        // `create_new`, so saving over an existing file fails rather than
+        // overwriting it; `imex::transfer` has a test that depends on that.
         let mut dst = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(path)
             .await?;
-        io::copy(&mut src, &mut dst).await?;
+        dst.write_all(&bytes).await?;
+        // tokio's `File` buffers; dropping it without flushing loses the write.
+        dst.flush().await?;
         Ok(())
     }
 
