@@ -73,8 +73,21 @@ address a message to three people, one never receives it, and nothing says so.
 We did not change it: it is woven through group handling and upstream's tests
 depend on it. Instead the send hook compares the `To` header against the
 envelope, records the difference in `msg_undelivered`, and warns, so a client
-can say "Dave did not receive this". Changing the send path itself remains
-open, and should be decided deliberately rather than as a side effect.
+can say "Dave did not receive this".
+
+**Decided 2026-09-02 (issue #2): this stays.** The two alternatives are worse.
+*Failing the send* is safe for the user's mental model but breaks group sends
+that work today, and would have us reject a message the recipient list of which
+is the chat's own state rather than the user's. *Splitting the message* --
+encrypted to those with keys, cleartext to those without -- leaks the content to
+the weakest recipient, and they are precisely the people least able to consent
+to that, since they are on the message because someone else put them there.
+
+What makes keeping it defensible is that the drop is no longer silent: it is
+recorded per message and `get_undelivered_recipients` exposes it, so a client
+can tell the user who did not receive what. That is a reporting guarantee, not
+an encryption one, and it is worth being clear about the difference -- the
+message still went out addressed to someone who never got it.
 
 ## Implementation note (found in Phase 1)
 
