@@ -336,9 +336,9 @@ def step2_inbound(rpc: Rpc, account_id: int, keydata: str) -> int:
     submit(message, GPG_USER)
 
     # Held, not delivered: heidi is neither verified nor known, and gating is
-    # on. Holding is a view -- the message is downloaded and readable.
+    # on. Unverified is a view -- the message is downloaded and readable.
     def look():
-        for msg_id in rpc.call("get_tagged_messages", account_id, "holding"):
+        for msg_id in rpc.call("get_tagged_messages", account_id, "unverified"):
             row = rpc.call("get_message_rows", account_id, [msg_id])[0]
             if row["subject"] == INBOUND_SUBJECT:
                 return msg_id
@@ -460,7 +460,7 @@ def step4_release(rpc: Rpc, account_id: int, msg_id: int) -> None:
     """
     def look():
         tags = rpc.call("get_message_tags", account_id, msg_id)
-        return "holding" not in [str(t).lower() for t in tags.get("system", [])]
+        return "unverified" not in [str(t).lower() for t in tags.get("system", [])]
 
     wait_for(look, "the held message to be released", timeout=30)
     check(True, "replying to the sender released the mail she sent cold")

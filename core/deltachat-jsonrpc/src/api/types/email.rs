@@ -356,7 +356,7 @@ impl From<deltachat::email::backup::BackupStatus> for JsonrpcBackupStatus {
 /// A tag every account has, without the user creating anything.
 ///
 /// `Inbox`, `Sent` and `Drafts` are derived from message state and have no rows;
-/// `Holding`, `Archive` and `Trash` are reserved labels, because each carries
+/// `Unverified`, `Archive` and `Trash` are reserved labels, because each carries
 /// state core does not already have. A client does not need to know which is
 /// which -- that is the point of returning them through one type. See
 /// `docs/adr/0017-system-tags.md`.
@@ -366,14 +366,15 @@ pub enum JsonrpcSystemTag {
     /// Incoming mail that has not been archived, held or trashed.
     Inbox,
     /// Mail from a sender who is neither verified nor known.
-    Holding,
+    Unverified,
     /// Outgoing mail that has left the drafts state.
     Sent,
     /// Unsent outgoing mail.
     Drafts,
     /// Mail the user has archived.
     Archive,
-    /// Mail the user threw away, or whose ephemeral timer fired.
+    /// Mail the user threw away, whose ephemeral timer fired, or that was
+    /// swept out of the unverified view.
     Trash,
 }
 
@@ -381,7 +382,7 @@ impl From<SystemTag> for JsonrpcSystemTag {
     fn from(tag: SystemTag) -> Self {
         match tag {
             SystemTag::Inbox => Self::Inbox,
-            SystemTag::Holding => Self::Holding,
+            SystemTag::Unverified => Self::Unverified,
             SystemTag::Sent => Self::Sent,
             SystemTag::Drafts => Self::Drafts,
             SystemTag::Archive => Self::Archive,
@@ -394,7 +395,7 @@ impl From<JsonrpcSystemTag> for SystemTag {
     fn from(tag: JsonrpcSystemTag) -> Self {
         match tag {
             JsonrpcSystemTag::Inbox => Self::Inbox,
-            JsonrpcSystemTag::Holding => Self::Holding,
+            JsonrpcSystemTag::Unverified => Self::Unverified,
             JsonrpcSystemTag::Sent => Self::Sent,
             JsonrpcSystemTag::Drafts => Self::Drafts,
             JsonrpcSystemTag::Archive => Self::Archive,
@@ -436,6 +437,8 @@ pub enum JsonrpcTrashReason {
     Deleted,
     /// Its ephemeral timer fired.
     Expired,
+    /// It was held from an unverified sender and never accepted.
+    Unaccepted,
 }
 
 /// What the trash knows about a message.
@@ -458,6 +461,7 @@ impl From<Trashed> for JsonrpcTrashed {
             reason: match t.reason {
                 Reason::Deleted => JsonrpcTrashReason::Deleted,
                 Reason::Expired => JsonrpcTrashReason::Expired,
+                Reason::Unaccepted => JsonrpcTrashReason::Unaccepted,
             },
         }
     }

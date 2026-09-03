@@ -1,6 +1,66 @@
-# Handoff — Phases 10–14b, and the first live pass
+# Handoff — Phases 10–14b, the first live pass, and v0.3.0
 
 **Written 2026-09-01, updated 2026-09-03.** Branch `phase-0-foundation`.
+
+## v0.3.0 — the release you install
+
+Everything before this was an engine and a client that worked if you extracted
+an archive and remembered a path. v0.3.0 is the first version a person installs.
+
+- **Installers.** `.deb` and `.AppImage` on Linux, NSIS on Windows, built by
+  `tauri build` in `release.yml` rather than `cargo build`. The bundler had been
+  configured and never invoked since Phase 7. The archive stays and becomes the
+  *tools*: `eeemail-cli` and `deltachat-rpc-server`, neither of which the app
+  uses. [ADR 0022](adr/0022-desktop-distribution.md).
+- **A first-launch dialog**, before the account list is read and so before the
+  setup form asks for a mail password. Unaudited software; use a dedicated
+  account and why; it still interoperates with ordinary clients; back it up. A
+  `PREVIEW` chip in the sidebar afterwards.
+  [ADR 0023](adr/0023-first-launch-disclosure.md).
+- **Windows was broken and nobody could have noticed.** `accounts_dir()` read
+  `XDG_DATA_HOME` then `HOME` and errored if it found neither — the ordinary
+  state of a Windows session — so the Windows binary the matrix had been
+  building since Phase 7 exited on launch. There is no Windows runner in CI and
+  the function reads the environment rather than anything a unit test builds.
+  Now `data_dir()` branches per platform.
+- **`Holding` → `Unverified`**, all the way down, with the label row renamed in
+  place by migration 171 so no message loses its tag.
+- **All three deadlines end in Trash.** `gating::purge` became `gating::sweep`
+  and moves mail rather than destroying it; both windows are now settings
+  (`UnverifiedTrashDays`, `TrashPurgeDays`).
+- **[`INSTALL.md`](INSTALL.md)** is the end-user document the project did not
+  have.
+
+### Four traps this left behind
+
+**1. Migration 171 renames data three ways, and each fails silently.** The
+`Config` key rename (`ephemeral_trash_days` → `trash_purge_days`) is the sharp
+one: `Config` is stored under its snake_case name, so without the carry-over an
+upgraded account drops to the compile-time default of `0` — destroy immediately
+— which is the one value a user of that setting would never have picked. Guarded
+by `migrations_tests::test_unverified_rename_migration`.
+
+**2. `UnverifiedTrashDays` reads `0` as *never sweep*, not *sweep now*.** This is
+the opposite of `TrashPurgeDays`, where `0` means destroy immediately, and the
+two sit next to each other in Settings. The asymmetry is deliberate — someone who
+wants unverified mail gone at once turns gating off, which releases it to the
+inbox where they can delete it — but it is exactly the kind of thing a later
+change will "tidy up". Guarded by `gating_tests::test_a_zero_window_never_sweeps`.
+
+**3. The npm and Rust Tauri versions must move together.** `tauri build`
+refuses to run when the `tauri` crate and `@tauri-apps/api` differ in
+major/minor; `cargo build` never checked, so they had silently drifted to 2.2.5
+and 2.11.1. Both npm packages are now pinned to **exact** versions for that
+reason -- a caret range is what let them drift. The Rust side is capped by
+`rust-version = 1.89`, which CI gates on, so moving Tauri forward means moving
+the MSRV first, deliberately and in its own change.
+
+**4. The unverified deadline is computed at sweep time, not stored.**
+`held_msgs.purge_at` was dropped in migration 171 on purpose: the deadline is
+`held_at` plus the *current* setting, so changing the setting moves mail already
+waiting. Re-introducing a stored deadline would be a second source of truth that
+silently outvotes the setting. Guarded by
+`gating_tests::test_shortening_the_window_moves_mail_already_waiting`.
 
 ## Where the project is
 
@@ -14,17 +74,29 @@ and its outgoing crypto is no longer only read by the library that wrote it.
 Still unaudited, and still untested against Thunderbird, Gmail or any
 mainstream provider.
 
+Green as of 2026-09-03, **on the tree before the v0.3.0 changes above**:
+
 ```
 cargo nextest run --workspace           1362 passed, 0 failed, 1 skipped
 cargo clippy --all-targets -D warnings  clean
 cargo fmt --check                       clean
-scripts/check-fork-patches.sh           clean
-cd desktop && npx tsc --noEmit          clean
-./scripts/screenshots.sh                9 images, byte-stable across runs
 python3 scripts/e2e-pass.py             all six steps pass
 python3 scripts/interop-pass.py         all steps pass, against upstream v2.59.0
 python3 scripts/gpg-interop-pass.py     all steps pass, against GnuPG 2.4.9
 ```
+
+Re-run on the current tree:
+
+```
+scripts/check-fork-patches.sh           clean
+cd desktop && npm run check && npm run build   clean
+./scripts/screenshots.sh                11 images, byte-stable across runs
+```
+
+**The cargo lines and the three live passes have not been re-run since the
+v0.3.0 changes** — there was no Rust toolchain where they were made. That is the
+first item under "Suggested next steps" and it is listed in
+`.github/RELEASE_NOTES.md` as blocking the tag.
 
 Run the suite with `cargo nextest`, never `cargo test` — see
 [`testing.md`](testing.md) for why.
@@ -77,11 +149,12 @@ key is unauthenticated and never counts as verified.
 re-running the pass. The same correspondent is two contact rows — an
 address-contact from the mail you sent them, a key-contact from the encrypted
 reply — and `gating::is_trusted` asked only about the row the message arrived
-on. So replies to the user's own mail went to Holding. Trust is now decided per
+on. So replies to the user's own mail were held. Trust is now decided per
 person, across rows sharing an address; verification still is not.
 
 **5. A test-ordering trap worth keeping.** Writing to someone makes them known,
-which releases their held mail. Any test that replies before checking Holding
+which releases their held mail. Any test that replies before checking the
+unverified view
 dismantles what it is checking. The pass is ordered accordingly, with a comment.
 
 ## The interop pass
@@ -216,10 +289,20 @@ unless something was decrypted, so `store` takes `imf_raw` too.
   our outgoing crypto has now been read by something that is not rPGP.
   **Thunderbird, Gmail and any mainstream provider remain untested**, and are
   not automatable in this environment.
-- **Housekeeping cannot be triggered on demand.** `gating::purge` and
+- **Housekeeping cannot be triggered on demand.** `gating::sweep` and
   `ephemeral::purge` run only every `HOUSEKEEPING_PERIOD`
-  (`scheduler.rs:449-453`), so the 30-day purge deadlines are not exercised
-  live. Divert-to-trash and restore are.
+  (`scheduler.rs:449-453`), so the 30-day deadlines are not exercised live.
+  Divert-to-trash and restore are. Unit tests cover all three deadlines with a
+  shifted clock; what is untested live is the scheduling, not the logic.
+- **The `.AppImage` has never been built, and no installer has been installed.**
+  `tauri build --bundles deb` was run and the `.deb` unpacked and checked, so
+  the launcher entry, the binary rename and the icons are verified. AppImage
+  bundling fails on a developer machine for an unrelated reason --
+  `linuxdeploy-plugin-gtk` hardcodes `/usr/lib/gdk-pixbuf-2.0/2.10.0`, which
+  modern gdk-pixbuf does not provide -- so it needs a `workflow_dispatch`
+  rehearsal on an Ubuntu runner. Nothing has been *installed* anywhere; the
+  Windows check matters most, because `%APPDATA%` is the path that could not
+  work before.
 - **Issue #2** — upstream drops recipients whose key is missing from the
   envelope while leaving them in the header. eeemail records who, and does not
   change the behaviour.
@@ -230,6 +313,11 @@ unless something was decrypted, so `store` takes `imf_raw` too.
 
 ## Suggested next steps, in order
 
+0. **Run what v0.3.0 could not.** `.github/RELEASE_NOTES.md` lists it: the whole
+   cargo suite, the three live passes, and a real install per platform. None of
+   it needs a decision, all of it needs a toolchain this was not written on, and
+   the release notes say plainly that it has not been done rather than implying
+   it has.
 1. Merge from upstream. The fork is still at `v2.59.0`; the longer that waits,
    the worse the first merge is — and ADR 0021 diverges from upstream on
    something upstream changed deliberately, so read that ledger note first.

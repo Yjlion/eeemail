@@ -6,21 +6,23 @@
  * on the process that renders untrusted mail, in exchange for machinery this
  * does not need. See `docs/adr/0013-desktop-ui.md`.
  *
- * It deliberately does not paper over the engine. Encryption state, holding,
- * expiry, undelivered recipients and the at-rest gap are shown as they are,
- * because they are exactly what an encrypted mail client has to be honest
- * about.
+ * It deliberately does not paper over the engine. Encryption state, the
+ * unverified view, expiry, undelivered recipients and the at-rest gap are shown
+ * as they are, because they are exactly what an encrypted mail client has to be
+ * honest about.
  */
 
 import { rpc, isDemo } from "./client";
 import { state, changed, onChange, applyHash } from "./state";
-import { renderSidebar, refreshHeldCount } from "./views/sidebar";
+import { renderSidebar, refreshUnverifiedCount } from "./views/sidebar";
 import { refreshList, renderList } from "./views/list";
 import { renderReading } from "./views/reading";
 import { renderComposer } from "./views/composer";
 import { renderContacts } from "./views/contacts";
 import { renderSettings } from "./views/settings";
 import { renderSetup } from "./views/setup";
+import { showFirstRun } from "./views/firstrun";
+import { firstRunPending } from "./shell";
 import type { Label } from "./types";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -28,6 +30,11 @@ if (!app) throw new Error("missing #app");
 
 async function boot(): Promise<void> {
   await rpc.ready();
+
+  // Before the account list, and so before the setup form: what this software
+  // is has to be said ahead of the screen that asks for a mail password, not
+  // after it.
+  if (await firstRunPending()) await showFirstRun();
 
   const ids = (await rpc.call("get_all_account_ids")) as number[];
   if (ids.length === 0) {
@@ -61,7 +68,7 @@ async function boot(): Promise<void> {
 
 /** Re-reads the current list from the engine, then repaints. */
 async function reload(): Promise<void> {
-  await Promise.all([refreshList(), refreshHeldCount()]);
+  await Promise.all([refreshList(), refreshUnverifiedCount()]);
   changed();
 }
 
@@ -168,7 +175,11 @@ onChange(render);
 
 // A demo build answers from fixtures and never reaches an account. Saying so on
 // screen is cheaper than someone mistaking a screenshot for their mailbox.
-if (isDemo) document.body.classList.add("demo");
+//
+// Every other build says `PREVIEW`, on the same pattern. The first-launch
+// dialog is dismissed once and then gone; the state it describes lasts longer
+// than one click, so something has to keep saying it.
+document.body.classList.add(isDemo ? "demo" : "preview");
 
 boot().catch((err) => {
   app!.className = "single";

@@ -21,3 +21,31 @@ export async function stageAttachment(file: File): Promise<string> {
   const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
   return (await invoke("stage_attachment", { name: file.name, bytes })) as string;
 }
+
+/**
+ * Whether the first-launch disclosure still has to be shown.
+ *
+ * A file beside the accounts, not a config value: the disclosure comes *before*
+ * an account exists, and `Config` is per-account. A demo build never shows it,
+ * because a demo build is a screenshot of a mailbox nobody has -- except on the
+ * `#/first-run` route, which exists so the dialog is reviewable like every other
+ * screen.
+ */
+export async function firstRunPending(): Promise<boolean> {
+  if (isDemo) return window.location.hash === "#/first-run";
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return (await invoke("first_run_pending")) as boolean;
+  } catch {
+    // Showing it twice is a papercut; never showing it is the thing this exists
+    // to prevent.
+    return true;
+  }
+}
+
+/** Records that the user acknowledged the disclosure. */
+export async function acknowledgeFirstRun(): Promise<void> {
+  if (isDemo) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("acknowledge_first_run");
+}

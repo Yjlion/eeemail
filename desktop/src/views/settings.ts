@@ -22,7 +22,7 @@ export async function renderSettings(el: HTMLElement): Promise<void> {
       rpc.call("get_encryption_mode", [account]),
       rpc.call("get_mdn_policy", [account]),
       rpc.call("get_inbox_gating", [account]),
-      rpc.call("get_hold_days", [account]),
+      rpc.call("get_unverified_trash_days", [account]),
       rpc.call("get_trash_purge_days", [account]),
       rpc.call("get_ephemeral_default", [account]),
       rpc.call("get_blob_encryption", [account]),
@@ -102,14 +102,44 @@ export async function renderSettings(el: HTMLElement): Promise<void> {
       </section>
 
       <section>
-        <h2 class="section">Inbox gating</h2>
+        <h2 class="section">Unverified mail</h2>
         <label class="check">
           <input type="checkbox" data-set="gating" ${gating ? "checked" : ""} />
           Hold mail from senders who are neither verified nor in my contacts
         </label>
+        <label>Move it to Trash after
+          <select data-set="hold">
+            ${option("0", "Never — let it wait indefinitely", String(holdDays))}
+            ${option("7", "1 week", String(holdDays))}
+            ${option("30", "30 days", String(holdDays))}
+            ${option("90", "90 days", String(holdDays))}
+          </select>
+        </label>
         <p class="hint">
-          Held mail waits ${holdDays} days in <strong>Holding</strong> and is then
-          discarded. Turning this off releases everything currently held.
+          Held mail waits in <strong>Unverified</strong> until you accept or
+          verify the sender. If you never do, it moves to <strong>Trash</strong>
+          rather than being destroyed &mdash; but accepting the sender after that
+          will not bring it back, so restore it from Trash by hand.
+          Turning the hold off releases everything currently waiting.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="section">Trash</h2>
+        <label>Delete from Trash after
+          <select data-set="purge">
+            ${option("0", "Immediately — do not keep a copy", String(purgeDays))}
+            ${option("7", "1 week", String(purgeDays))}
+            ${option("30", "30 days", String(purgeDays))}
+            ${option("90", "90 days", String(purgeDays))}
+          </select>
+        </label>
+        <p class="hint">
+          This covers everything in Trash, however it got there: thrown away by
+          hand, expired by a timer, or swept out of Unverified. Trash is the only
+          place in eeemail that destroys mail, and this is how long it waits
+          first. Each message keeps the window it was given when it arrived, so
+          changing this does not re-time what is already there.
         </p>
       </section>
 
@@ -124,20 +154,12 @@ export async function renderSettings(el: HTMLElement): Promise<void> {
             ${option("31536000", "1 year", String(ephemeral))}
           </select>
         </label>
-        <label>Keep expired mail in Trash for
-          <select data-set="purge">
-            ${option("0", "Not at all — destroy it immediately", String(purgeDays))}
-            ${option("7", "1 week", String(purgeDays))}
-            ${option("30", "30 days", String(purgeDays))}
-            ${option("90", "90 days", String(purgeDays))}
-          </select>
-        </label>
         <p class="hint">
           Off by default: whether your mail expires is your call. When a timer
           fires the message moves to <strong>Trash</strong> and stays readable,
-          so you can change your mind &mdash; unless you set that window to
-          nothing. Removal from the server and from the other person's client is
-          immediate either way.
+          so you can change your mind &mdash; for as long as the Trash section
+          above says. Removal from the server and from the other person's client
+          is immediate either way.
         </p>
       </section>
 
@@ -216,6 +238,21 @@ export async function renderSettings(el: HTMLElement): Promise<void> {
       void guard(() =>
         rpc.call("set_encryption_mode", [account, (event.target as HTMLSelectElement).value]),
       ),
+  );
+  el.querySelector<HTMLSelectElement>("select[data-set='hold']")?.addEventListener(
+    "change",
+    (event) =>
+      void guard(async () => {
+        await rpc.call("set_unverified_trash_days", [
+          account,
+          Number((event.target as HTMLSelectElement).value),
+        ]);
+        // Repaint, not because anything moved yet -- the sweep runs in
+        // housekeeping, not on this click -- but because the deadline is read
+        // afresh on every sweep, so shortening this changes what the *next*
+        // one takes, including mail already waiting.
+        changed();
+      }),
   );
   el.querySelector<HTMLSelectElement>("select[data-set='purge']")?.addEventListener(
     "change",

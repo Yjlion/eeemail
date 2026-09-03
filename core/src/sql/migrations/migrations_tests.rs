@@ -176,3 +176,63 @@ async fn test_key_contacts_migration_verified() -> Result<()> {
 
     Ok(())
 }
+
+/// eeemail: migration 171 renames in place rather than starting over.
+///
+/// Three things could each lose data silently, which is why they are asserted
+/// rather than assumed: the reserved label is renamed, so every `msg_labels`
+/// row keeps pointing at the same id; the config key is carried over, because
+/// `Config` is stored under its snake_case name and an orphaned
+/// `ephemeral_trash_days` would leave the account on the compile-time default
+/// of `0` -- destroy immediately, the one value a user of this setting would
+/// never have picked; and dropping `held_msgs.purge_at` keeps the rows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_unverified_rename_migration() -> Result<()> {
+    let t = STOP_MIGRATIONS_AT
+        .scope(170, async move { TestContext::new_alice().await })
+        .await;
+
+    let label_id: i64 = t
+        .sql
+        .query_get_value("SELECT id FROM labels WHERE name_norm='holding'", ())
+        .await?
+        .expect("migration 169 creates the Holding label");
+    t.sql
+        .execute(
+            "INSERT INTO config (keyname, value) VALUES ('ephemeral_trash_days', '7')",
+            (),
+        )
+        .await?;
+    t.sql
+        .execute(
+            "INSERT INTO held_msgs (msg_id, held_at, purge_at) VALUES (4242, 1000, 9000)",
+            (),
+        )
+        .await?;
+
+    t.sql.run_migrations(&t).await?;
+
+    // Renamed in place: same row, so no message loses its tag.
+    let (name, id): (String, i64) = t
+        .sql
+        .query_row(
+            "SELECT name, id FROM labels WHERE name_norm='unverified'",
+            (),
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .await?;
+    assert_eq!(name, "Unverified");
+    assert_eq!(id, label_id);
+
+    // The window the user chose, under its new key.
+    assert_eq!(t.get_config_int(Config::TrashPurgeDays).await?, 7);
+
+    // The hold survives losing the column that used to carry its deadline.
+    let held_at: i64 = t
+        .sql
+        .query_get_value("SELECT held_at FROM held_msgs WHERE msg_id=4242", ())
+        .await?
+        .expect("the hold must survive the column drop");
+    assert_eq!(held_at, 1000);
+    Ok(())
+}

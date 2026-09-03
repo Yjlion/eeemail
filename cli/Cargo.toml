@@ -1,6 +1,6 @@
 [package]
 name = "eeemail-cli"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 license = "MPL-2.0"
 description = "Headless driver for eeemail, used for development and integration tests."

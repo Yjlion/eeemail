@@ -53,14 +53,14 @@ pub const TRASH: &str = "Trash";
 
 /// Name of the reserved label for mail from a sender who is neither verified
 /// nor known. See `docs/adr/0018-contact-gating.md`.
-pub const HOLDING: &str = "Holding";
+pub const UNVERIFIED: &str = "Unverified";
 
 /// Reserved names are not localised.
 ///
 /// A name is the identifier on the sync wire, so translating it would make two
 /// devices in two locales disagree about which tag is which. The UI translates
 /// the display string. See `docs/adr/0017-system-tags.md`.
-pub const RESERVED: [&str; 3] = [ARCHIVE, TRASH, HOLDING];
+pub const RESERVED: [&str; 3] = [ARCHIVE, TRASH, UNVERIFIED];
 
 /// How long a label application for a message we do not have is kept.
 ///
@@ -363,7 +363,7 @@ pub async fn unapply(context: &Context, msgs: &[MsgId], id: LabelId) -> Result<(
 /// Applies or removes a label, optionally without syncing.
 ///
 /// `Sync::Nosync` is for tags a device derives for itself --
-/// [`super::gating`]'s `Holding` and [`super::ephemeral`]'s automatic `Trash`.
+/// [`super::gating`]'s `Unverified` and [`super::ephemeral`]'s automatic `Trash`.
 /// Syncing those would let one device's classification of a message override
 /// another device's, when both classified the same message independently and
 /// correctly.

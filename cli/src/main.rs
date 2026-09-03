@@ -45,11 +45,12 @@ Organization
   unarchive <msg-id>            move a message back to the inbox
   search <text>                 search body, subject, recipients
   tags <msg-id>                 every tag on a message, system and user
-  list <tag>                    inbox | holding | sent | drafts | archive | trash
+  list <tag>                    inbox | unverified | sent | drafts | archive | trash
 
 Gating and the trash
   gating get                    whether unverified senders are held
   gating set <on|off>           turn inbox gating on or off
+  gating days <n>               days before unverified mail is swept to trash
   release <contact-id>          release a contact's held mail
   trash <msg-id>                throw a message away, recoverably
   restore <msg-id>              take a message back out of the trash
@@ -310,9 +311,16 @@ async fn dispatch(ctx: &Context, command: &str, args: &[&str]) -> Result<Value> 
 
         ("gating", ["get"]) => Ok(json!({
             "enabled": email::gating::is_enabled(ctx).await?,
-            "holdDays": email::gating::HOLD_DAYS,
+            "holdDays": email::gating::hold_days(ctx).await?,
             "held": email::gating::held(ctx).await?.len(),
         })),
+        ("gating", ["days", value]) => {
+            let days: i64 = value
+                .parse()
+                .with_context(|| format!("expected a number of days, got {value:?}"))?;
+            email::gating::set_hold_days(ctx, days).await?;
+            Ok(json!({ "holdDays": email::gating::hold_days(ctx).await? }))
+        }
         ("gating", ["set", value]) => {
             let enabled = match *value {
                 "on" | "true" | "1" => true,

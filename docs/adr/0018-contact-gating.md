@@ -1,6 +1,8 @@
 # 0018 — Mail from strangers is held, not delivered, and expires if never accepted
 
-**Status:** Accepted — 2026-09-01
+**Status:** Accepted — 2026-09-01 · Amended 2026-09-03 (the deadline moves
+mail to Trash rather than discarding it; the window is a setting; the tag is now
+called `Unverified`)
 
 ## Context
 
@@ -33,6 +35,31 @@ carrying those patches forever is a poor trade for a value written once.
 
 **Held mail is purged 30 days after it arrives.** Not archived — discarded.
 
+> **Amended 2026-09-03.** It is **swept into `Trash`**, not discarded, and the
+> window is `Config::UnverifiedTrashDays` rather than a constant. Two reasons.
+> The deadline a few lines away in [0019](0019-recoverable-ephemeral-expiry.md)
+> had already grown a recoverable window on the argument that a timer must not
+> destroy the only copy of a mailbox, and that argument does not stop applying
+> because the mail came from a stranger — it was the *same deadline problem*,
+> answered two different ways in two adjacent modules. And "30 days" was a
+> compile-time constant the UI could only report, so a user who found the window
+> too short or too long had nothing to do about it.
+>
+> `Trash` then applies its own deadline and destroys, which makes it the single
+> place in eeemail where mail is destroyed on a timer. The consequences below
+> are unchanged in substance: mail from someone you never accepted still goes
+> away, it now takes two windows rather than one and is recoverable throughout
+> the second.
+>
+> **The window is measured from `held_at` and read afresh on every sweep**, so
+> changing it moves mail that is already waiting. A deadline stored per row at
+> hold time would have been a second source of truth that silently outvoted the
+> setting, so `held_msgs.purge_at` was dropped in migration 171.
+>
+> **`0` means never sweep**, not sweep at once. Someone who wants unverified
+> mail gone immediately turns gating off, which releases it to the inbox where
+> they can delete it.
+
 **Accepting or verifying a contact releases their mail**, the messages already
 held as well as everything after.
 
@@ -42,11 +69,18 @@ Inbox as before.
 ## Consequences
 
 - **This can lose mail, and that is the trade.** A message from someone you
-  genuinely wanted to hear from, whom you never accepted, is gone in 30 days.
-  The alternative — hold forever — turns Holding into a second inbox that
+  genuinely wanted to hear from, whom you never accepted, is gone in 30 days —
+  since the 2026-09-03 amendment, gone *to Trash*, and gone for real 30 days
+  after that.
+  The alternative — hold forever — turns the view into a second inbox that
   accumulates exactly the mail nobody wanted to look at, which is the problem
-  this is meant to solve. Holding is visible, sorted and searchable, and 30 days
+  this is meant to solve. It is visible, sorted and searchable, and 30 days
   is longer than the window in which unsolicited mail is worth anything.
+- **Accepting a sender does not reach mail that has already been swept.**
+  `release` reads `held_msgs`, and the sweep deletes that row. The message is in
+  `Trash`, visible and restorable by hand. Releasing mail back out of a bin the
+  user may have deliberately emptied would be the stranger behaviour, and the
+  settings copy says which it is.
 - **On by default is the point.** A gate the user has to find and enable
   protects the people who already knew to look for it. This is the same reason
   the release notes called out ephemeral shipping disabled as a problem: a

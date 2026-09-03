@@ -241,7 +241,7 @@ async fn test_held_mail_is_not_in_the_inbox() -> Result<()> {
     assert_eq!(
         search(
             &t,
-            &SearchQuery::text("report").with_tag(SystemTag::Holding)
+            &SearchQuery::text("report").with_tag(SystemTag::Unverified)
         )
         .await?,
         vec![held]

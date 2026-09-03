@@ -1,7 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "eeemail",
-  "version": "0.1.0",
+  "mainBinaryName": "eeemail",
+  "version": "0.3.0",
   "identifier": "chat.eeemail.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -25,7 +26,23 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "icon": ["icons/icon.png", "icons/icon.ico"]
+    "targets": [
+      "deb",
+      "appimage",
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Productivity",
+    "shortDescription": "End-to-end encrypted email client",
+    "longDescription": "An end-to-end encrypted email client with classic email functionality, built on a fork of chatmail/core. IMAP and SMTP are used as transport only: mail is downloaded, decrypted, stored locally and removed from the server.",
+    "publisher": "eeemail",
+    "copyright": "Licensed under MPL-2.0",
+    "licenseFile": "../../LICENSE"
   }
 }

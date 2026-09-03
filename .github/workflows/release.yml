@@ -33,10 +33,12 @@ jobs:
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
+            bundles: deb,appimage
           - name: windows-amd64
             os: windows-latest
             target: x86_64-pc-windows-msvc
             archive: zip
+            bundles: nsis
     steps:
       - uses: actions/checkout@v7
         with:
@@ -74,17 +76,40 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
-      # `tauri::generate_context!` reads `frontendDist` at compile time, so the
-      # frontend must exist before cargo runs.
-      - name: Build the frontend
+      # `tauri build` runs `npm run build` itself, so this is here for `npm ci`
+      # and for the `tsc --noEmit` inside it: a type error should stop a release
+      # before it spends twenty minutes compiling the engine.
+      - name: Install and check the frontend
         working-directory: desktop
         run: |
           npm ci
           npm run build
 
-      - name: Build
+      # The two headless binaries. The desktop app is built by `tauri build`
+      # below instead, because `cargo build` produces an executable and this
+      # release has to produce something a launcher can install.
+      - name: Build the headless binaries
         working-directory: core
-        run: cargo build --release --locked --target ${{ matrix.target }} -p eeemail-cli -p eeemail-desktop -p deltachat-rpc-server
+        run: cargo build --release --locked --target ${{ matrix.target }} -p eeemail-cli -p deltachat-rpc-server
+
+      # Installers, not a loose executable: a .deb or an .AppImage registers a
+      # desktop entry and an icon, which is what makes eeemail something you
+      # launch rather than something you remember the path to.
+      #
+      # `--bundles` per platform rather than the config's list, so a Linux
+      # runner without rpm tooling cannot fail a release over a bundle nobody
+      # asked for.
+      - name: Build the desktop app
+        working-directory: desktop
+        env:
+          # `linuxdeploy`, which the AppImage bundler drives, is itself an
+          # AppImage and needs FUSE2 to mount itself. `ubuntu-latest` is 24.04,
+          # which no longer ships libfuse2, so without this the AppImage target
+          # fails on a runner that has nothing to do with our code. Extracting
+          # instead of mounting is the documented way out and costs a little
+          # disk. Harmless on Windows, where nothing reads it.
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: npm run tauri build -- --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
       - name: Stage artifacts
         shell: bash
@@ -95,16 +120,30 @@ jobs:
           bin="core/target/${{ matrix.target }}/release"
           suffix=""
           if [ "${{ runner.os }}" = "Windows" ]; then suffix=".exe"; fi
-          for tool in eeemail-cli eeemail-desktop deltachat-rpc-server; do
+
+          # The tarball is now the *tools*: the desktop app ships as an
+          # installer. `eeemail-cli` inspects a mailbox and cannot send or
+          # receive; `deltachat-rpc-server` is for automation and the test
+          # passes, and the desktop app does not use it -- it embeds the engine
+          # in-process. See docs/INSTALL.md.
+          for tool in eeemail-cli deltachat-rpc-server; do
             cp "$bin/$tool$suffix" "dist/$out/"
           done
-          cp LICENSE NOTICE README.md "dist/$out/"
-          cd dist
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            7z a "$out.zip" "$out"
-          else
-            tar czf "$out.tar.gz" "$out"
-          fi
+          cp LICENSE NOTICE README.md docs/INSTALL.md "dist/$out/"
+          ( cd dist
+            if [ "${{ matrix.archive }}" = "zip" ]; then
+              7z a "$out.zip" "$out"
+            else
+              tar czf "$out.tar.gz" "$out"
+            fi )
+
+          # Installers, flattened out of Tauri's per-format directories so the
+          # release page lists files rather than paths.
+          bundle="$bin/bundle"
+          find "$bundle" -type f \
+            \( -name '*.deb' -o -name '*.AppImage' -o -name '*.exe' -o -name '*.msi' \) \
+            -exec cp {} dist/ \;
+          ls -la dist
 
       # A checksum per archive, so a download can be verified without trusting
       # the transport it arrived over.
@@ -112,7 +151,7 @@ jobs:
         shell: bash
         working-directory: dist
         run: |
-          for f in *.tar.gz *.zip; do
+          for f in *.tar.gz *.zip *.deb *.AppImage *.exe *.msi; do
             [ -e "$f" ] || continue
             if command -v sha256sum >/dev/null; then
               sha256sum "$f" > "$f.sha256"
@@ -127,6 +166,10 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.deb
+            dist/*.AppImage
+            dist/*.exe
+            dist/*.msi
             dist/*.sha256
           if-no-files-found: error
 

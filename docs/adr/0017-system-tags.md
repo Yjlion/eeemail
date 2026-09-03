@@ -1,6 +1,6 @@
 # 0017 — System tags: derived where possible, stored where they must be
 
-**Status:** Accepted — 2026-09-01 · Supersedes the "archive is the removal of the Inbox label" wording in [0005](0005-labels-not-folders.md)
+**Status:** Accepted — 2026-09-01 · Supersedes the "archive is the removal of the Inbox label" wording in [0005](0005-labels-not-folders.md) · Amended 2026-09-03 (`Holding` is renamed `Unverified`)
 
 ## Context
 
@@ -74,3 +74,24 @@ so a caller asks once.
   wire ([0009](0009-labels-and-search.md)); translating it would make two
   devices in two locales disagree about which tag is which. The UI translates
   the display string.
+
+## Amendment — 2026-09-03
+
+`Holding` is renamed **`Unverified`**, everywhere: the display string, the
+`SystemTag` variant, the `"unverified"` identifier on the RPC wire, the
+`UNVERIFIED` constant, and the reserved label row itself.
+
+"Holding" described what the mailbox was doing with the mail. "Unverified"
+describes what is actually true about the sender, which is the thing the user has
+to decide about — and it matches the badge vocabulary the reading pane already
+uses, where "encrypted" and "verified" are two separate claims
+([0021](0021-autocrypt-key-contacts.md)).
+
+The reserved label is **renamed in place** by migration 171 rather than dropped
+and recreated, so every `msg_labels` row keeps pointing at the same id and no
+message loses its tag. `name` is what travels on the sync wire, so the rename
+reaches the user's other devices the next time a label syncs.
+
+Two things were deliberately *not* renamed: the `gating` module, which is named
+for what it does, and the `held_msgs` table, which is private storage where a
+rename would cost a migration and buy the user nothing.

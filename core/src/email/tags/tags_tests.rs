@@ -39,7 +39,7 @@ fn test_the_derived_stored_split_is_one_function() {
         .collect();
     assert_eq!(
         stored,
-        vec![SystemTag::Holding, SystemTag::Archive, SystemTag::Trash]
+        vec![SystemTag::Unverified, SystemTag::Archive, SystemTag::Trash]
     );
 }
 
@@ -66,7 +66,7 @@ async fn test_reserved_labels_exist_after_migration() -> Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_incoming_mail_from_a_known_sender_is_in_the_inbox() -> Result<()> {
     let t = TestContext::new_alice().await;
-    // Gating off, so this test is about the inbox and not about holding.
+    // Gating off, so this test is about the inbox and not about the unverified view.
     super::super::gating::set_enabled(&t, false).await?;
     let msg_id = recv(&t, "inbox@example.org").await?;
 
