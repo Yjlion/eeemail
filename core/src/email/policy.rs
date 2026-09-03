@@ -232,6 +232,18 @@ pub async fn apply_defaults(context: &Context) -> Result<()> {
             )
             .await?;
     }
+    if context
+        .get_config_bool_opt(Config::SubjectInBody)
+        .await?
+        .is_none()
+    {
+        // Upstream prepends the subject into the body of classic mail, which
+        // suits a chat bubble with no subject line and corrupts the body of a
+        // message an email client displays the subject of separately.
+        context
+            .set_config_bool(Config::SubjectInBody, false)
+            .await?;
+    }
     Ok(())
 }
 

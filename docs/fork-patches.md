@@ -43,12 +43,20 @@ Then, in the same pull request:
 
 1. Resolve conflicts. The table below tells you what each of our patches to an
    upstream file was for; preserve the intent, not necessarily the diff.
-2. Update `docs/fork-base` to the new upstream commit and "Last merged" above.
+2. Update `docs/fork-base` to the new upstream commit and "Last merged" above,
+   and `docs/interop-upstream` to the tag you merged to. The two move together:
+   the interop pass is only unambiguous when it runs against the release we are
+   actually forked from. `scripts/interop-pass.py --fetch-only` prints the hash
+   it observed when the recorded one no longer matches, so re-recording it is
+   copy-paste.
 3. Re-run the full test suite (`cd core && cargo nextest run --workspace`;
    see [`testing.md`](testing.md) for why not `cargo test`).
-4. Re-run the interop tests -- Autocrypt and SecureJoin against a real Delta
-   Chat client. Upstream changes crypto and protocol code routinely, and a green
-   unit-test run does not prove we still interoperate.
+4. Re-run `scripts/interop-pass.py` -- Autocrypt and SecureJoin against
+   upstream's own released binary. Upstream changes crypto and protocol code
+   routinely, and a green unit-test run does not prove we still interoperate.
+   Read this ledger's note on ADR 0021 first: it is the one place we diverge
+   from something upstream changed deliberately, so it is the first thing a
+   merge will break.
 
 Never merge upstream and change our own behavior in the same commit. If a merge
 needs adaptation, land the merge first and the adaptation second, so a bisect
@@ -109,6 +117,11 @@ can tell them apart.
 | `core/src/message.rs` | HTML-part and vCard reads switched to `email::blobcrypt::read`. | Same. | [0020](adr/0020-blobdir-encryption.md) |
 | `core/src/qr_code_generator.rs` | Two avatar reads switched to `email::blobcrypt::read`. | Same. | [0020](adr/0020-blobdir-encryption.md) |
 | `core/src/email/vault.rs` | `protection` measures the blobdir through `blobcrypt::cleartext_bytes` instead of hardcoding `blobs_encrypted: false`. | Ours, not upstream's, but listed because the honesty property depends on it: the value is measured from the files rather than read off the setting, so an interrupted migration reports `partial` rather than a half-truth. | [0015](adr/0015-at-rest-and-backup.md), [0020](adr/0020-blobdir-encryption.md) |
+
+| `core/src/message.rs` | `save_file` reads through `email::blobcrypt::read` and writes the plaintext, instead of copying the blob byte-for-byte with `io::copy`. | Saving an attachment is the one path on which a stored blob leaves the blobdir without being interpreted, and it was missed when every other read path was converted. With `BlobEncryption` on, a plain copy hands the user an `EEEBLOB1` container named `report.pdf`. `create_new(true)` is preserved -- `imex/transfer.rs` asserts that saving over an existing file fails -- and the write is flushed, because tokio's `File` buffers and dropping it loses the write. Guarded by `blobcrypt_tests::test_saving_an_attachment_writes_plaintext`. | [0020](adr/0020-blobdir-encryption.md) |
+| `core/src/config.rs` | Added `Config::SubjectInBody`, **defaulting to upstream's behaviour** (`1`). | Upstream prepends the subject into the body text of classic mail, which suits a chat bubble with no subject line and corrupts the body of a message an email client shows the subject of separately. Keeping upstream's compile-time default is what makes this a three-line change: roughly 37 upstream test assertions expect the prepended form, and patching them would be a conflict on every merge forever. `email::policy::apply_defaults` turns it off for eeemail accounts instead. Upstream test churn: zero. | [0008](adr/0008-email-message-model.md), [0012](adr/0012-rpc-and-cli.md) |
+| `core/src/mimeparser.rs` | One extra condition on the subject-prepend block in `parse_headers`, reading `Config::SubjectInBody`. | The gate for the above. `parse_headers` already takes `&Context`, so no signature changes. The neighbouring block that uses the subject *as* the body when a message has no text part is deliberately untouched: that one is desirable. | [0008](adr/0008-email-message-model.md) |
+| `core/src/context.rs` | Added `subject_in_body` to the `get_info` map. | Upstream's `test_get_info_completeness` requires every `Config` key to appear in `get_info` or be explicitly skipped. | [0008](adr/0008-email-message-model.md) |
 
 Conflict guidance for the raw-MIME hooks: all three are single call sites whose
 *intent* is what matters -- retain originals on receive and send, expire them in

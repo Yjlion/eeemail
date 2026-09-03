@@ -1,0 +1,11 @@
+# The upstream release `scripts/interop-pass.py` runs eeemail against: the tag,
+# then the SHA-256 of its `deltachat-rpc-server-x86_64-linux` asset.
+#
+# Pinned to the tag in `docs/fork-base`, and moved with it. A failure against
+# the fork point is unambiguously ours; a failure against a newer release could
+# be ours or could be upstream drift we have not merged yet, which is the
+# merge's question rather than this pass's. See docs/fork-patches.md.
+#
+# Upstream publishes no checksum file, so this hash is our own observation. If
+# it stops matching, `interop-pass.py --fetch-only` prints what it saw.
+v2.59.0 b73ce0f8732f7589cd34e59db4b2ed6a0f6ab6857e691b73b06710e150af4ee0

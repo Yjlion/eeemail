@@ -911,7 +911,12 @@ impl MimeMessage {
             self.squash_attachment_parts();
         }
 
+        // eeemail: `SubjectInBody` is on in upstream's default and off for our
+        // accounts. An email client shows the subject in its own field, so
+        // prepending it into the body corrupts what a reply quotes, what search
+        // matches and what export writes out. See docs/adr/0008 and issue #8.
         if !context.get_config_bool(Config::Bot).await?
+            && context.get_config_bool(Config::SubjectInBody).await?
             && let Some(ref subject) = self.get_subject()
         {
             let mut prepend_subject = true;

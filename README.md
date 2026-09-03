@@ -92,8 +92,10 @@ opt-in, and requires
 a database passphrase; until you set one, attachments and retained message
 sources stay cleartext in the blobdir, and the app says so rather than claiming
 otherwise. Encrypted mail can silently omit a recipient whose key is missing;
-eeemail records who and can tell you. Nothing here has been interop-tested
-against Thunderbird, Gmail or a real Delta Chat client yet.
+eeemail records who and can tell you. Autocrypt, SecureJoin and outbound
+classic email are interop-tested against Delta Chat's own engine by
+[`scripts/interop-pass.py`](scripts/interop-pass.py); nothing has been tested
+against Thunderbird, Gmail or any mainstream provider.
 See the [open issues](https://github.com/Yjlion/eeemail/issues).
 
 ## Documentation

@@ -142,7 +142,7 @@ pub(crate) async fn store(
                     "INSERT INTO structured_data (msg_id, seq, json, trusted, source)
                      VALUES (?1, ?2, ?3, ?4, ?5)
                      ON CONFLICT(msg_id, seq) DO NOTHING",
-                    (msg_id, seq, json, trusted as i64, source.to_i64()),
+                    (msg_id, seq, json, i64::from(trusted), source.to_i64()),
                 )?;
             }
             Ok(())
@@ -160,7 +160,7 @@ async fn is_trusted(context: &Context, msg_id: MsgId) -> Result<bool> {
     let from_id: Option<crate::contact::ContactId> = context
         .sql
         .query_row_optional("SELECT from_id FROM msgs WHERE id=?", (msg_id,), |row| {
-            Ok(row.get(0)?)
+            row.get(0)
         })
         .await?;
     match from_id {

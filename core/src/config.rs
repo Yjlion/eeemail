@@ -508,7 +508,7 @@ pub enum Config {
     /// **Shipped as 0**, and that is now a preference rather than a safety
     /// measure. Expiry used to destroy the local copy outright; since
     /// docs/adr/0019-recoverable-ephemeral-expiry.md it moves the message to
-    /// `Trash` for `email::ephemeral::PURGE_DAYS` first, so a timer no longer
+    /// `Trash` for `email::ephemeral::DEFAULT_PURGE_DAYS` first, so a timer no longer
     /// loses mail. What is left is the judgement that whether mail expires is
     /// the user's call, and that no duration is right for everyone.
     ///
@@ -516,6 +516,27 @@ pub enum Config {
     /// docs/adr/0019-recoverable-ephemeral-expiry.md.
     #[strum(props(default = "0"))]
     EphemeralDefaultSeconds,
+
+    /// eeemail: whether the subject of classic mail is prepended into the
+    /// message body text.
+    ///
+    /// Upstream does this so a chat bubble, which has no subject line, still
+    /// shows what the mail was about. An email client displays the subject
+    /// separately, so for us the same code is body corruption: `msgs.txt`
+    /// literally reads "quarterly numbers - body", and that is what a reply
+    /// quotes, what search matches and what export writes out. It does not
+    /// apply to mail from another Delta Chat or eeemail client, where the
+    /// subject stays a subject.
+    ///
+    /// **On here, off for eeemail accounts.** Keeping upstream's behaviour as
+    /// the compile-time default is what makes this a small change rather than a
+    /// large one: roughly 37 upstream test assertions expect the prepended
+    /// form, and patching them all would be a merge conflict on every one
+    /// forever. `email::policy::apply_defaults` turns it off instead -- the
+    /// same arrangement as `InboxGating`, for the same reason.
+    /// See docs/adr/0012-rpc-and-cli.md.
+    #[strum(props(default = "1"))]
+    SubjectInBody,
 
     /// Enable sending and executing (applying) sync messages. Sending requires `BccSelf` to be set
     /// and `Bot` unset.

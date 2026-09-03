@@ -26,7 +26,7 @@ services:
     environment:
       MAIL_DOMAIN: ${MAIL_DOMAIN:-eeemail.test}
       # "user:password" pairs; addresses become user@MAIL_DOMAIN.
-      ACCOUNTS: ${ACCOUNTS:-alice:alicepw bob:bobpw carol:carolpw}
+      ACCOUNTS: ${ACCOUNTS:-alice:alicepw bob:bobpw carol:carolpw dana:danapw erin:erinpw frank:frankpw grace:gracepw heidi:heidipw ivan:ivanpw}
       STRICT_E2EE: ${STRICT_E2EE:-0}
     ports:
       - "${SMTP_PORT:-2525}:25"

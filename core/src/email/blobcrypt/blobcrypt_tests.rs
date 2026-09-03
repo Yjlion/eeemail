@@ -228,3 +228,23 @@ async fn test_a_corrupt_blob_is_unavailable_not_fatal() -> Result<()> {
     assert_eq!(read(&t, &good.to_abs_path()).await?, b"intact");
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_saving_an_attachment_writes_plaintext() -> Result<()> {
+    let t = locked().await?;
+    enable(&t).await?;
+
+    let mut msg = crate::message::Message::new(crate::message::Viewtype::File);
+    msg.set_file_from_bytes(&t, "report.pdf", b"the actual attachment", None)?;
+
+    // The one place a stored blob leaves the blobdir without being interpreted.
+    // A plain copy here hands the user an `EEEBLOB1` container named
+    // `report.pdf`, and they find out when they try to open it.
+    let dest = t.get_blobdir().parent().unwrap().join("saved.pdf");
+    msg.save_file(&t, &dest).await?;
+    assert_eq!(std::fs::read(&dest)?, b"the actual attachment");
+
+    // Saving over an existing file must still fail rather than overwrite.
+    assert!(msg.save_file(&t, &dest).await.is_err());
+    Ok(())
+}

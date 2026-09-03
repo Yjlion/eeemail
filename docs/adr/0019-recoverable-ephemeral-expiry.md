@@ -41,6 +41,17 @@ clear it, or take the `Trash` tag off a message that has already expired.
 
 **The global default stays `0`.** Ephemeral remains something the user turns on.
 
+**Revisited 2026-09-02 (issue #3) and unchanged.** The question was put again
+now that expiry is recoverable, on the grounds that the original objection --
+that a timer silently destroys the only copy of the mailbox -- had been removed.
+It has been, and that is not enough on its own: it disposes of an argument
+against a non-zero default without supplying one for it. A duration would have
+to be chosen, no duration is right for everyone's mail, and mail is not chat --
+the correspondence people expect to still have in five years goes through the
+same inbox as the message they would rather vanished. The machinery is complete
+and every test covers the on case, so a user who wants this has one config value
+to set.
+
 ## Consequences
 
 - The conflict with [0004](0004-local-store-and-raw-mime.md) is resolved rather

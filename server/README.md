@@ -63,12 +63,34 @@ same rule would silently destroy real user data.
 | | |
 |---|---|
 | Domain | `eeemail.test` (`MAIL_DOMAIN`) |
-| Accounts | `alice:alicepw bob:bobpw carol:carolpw` (`ACCOUNTS`, `user:password` pairs) |
+| Accounts | `alice bob carol dana erin frank grace heidi ivan`, password `<name>pw` (`ACCOUNTS`, `user:password` pairs) |
+| Ports | 2525→25, 2587→587, 2465→465, 2143→143, 2993→993 |
+
+`docker-compose.yml` is the source of truth for the account set. The bare
+`docker run` recipe above passes no `-e ACCOUNTS`, so it gets `entrypoint.sh`'s
+fallback of `alice` and `bob` only — as does the `mail-server` job in CI. Any
+script needing more than those two must be run against the compose file.
 
 `carol` exists so that `scripts/e2e-pass.py` can send a message with a `Cc:` to a
 third real mailbox and check the header survives the round trip. Two accounts
 cannot tell a dropped `Cc` from a delivered one.
-| Ports | 2525→25, 2587→587, 2465→465, 2143→143, 2993→993 |
+
+`dana`, `erin`, `frank` and `grace` are two independent pairs for
+`scripts/interop-pass.py`, which runs eeemail's engine against upstream's. They
+do not reuse `alice`/`bob` because those carry state from every `e2e-pass.py`
+run — including a completed SecureJoin, which would make the Autocrypt
+bootstrap the interop pass exists to check unobservable. Two pairs rather than
+one because SecureJoin is tested in both directions, and a second direction
+between an already-verified pair asserts nothing. **Within each pair, the
+earlier name is eeemail's and the later is upstream's**: `dana` and `frank` run
+our fork, `erin` and `grace` run the stock released binary.
+
+`heidi` and `ivan` are `scripts/gpg-interop-pass.py`'s, which runs eeemail
+against a GnuPG client rather than against another Delta Chat engine. `heidi` is
+GnuPG and never runs any of our code; `ivan` is eeemail. They are a pair of
+their own for the same reason the interop pass has its own: a mailbox carrying
+another pass's completed handshake would make the key exchange this one watches
+unobservable.
 
 ### What the smoke test covers
 

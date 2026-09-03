@@ -1,23 +1,29 @@
 # Handoff — Phases 10–14b, and the first live pass
 
-**Written 2026-09-01, updated 2026-09-02.** Branch `phase-0-foundation`.
+**Written 2026-09-01, updated 2026-09-03.** Branch `phase-0-foundation`.
 
 ## Where the project is
 
 The engine is complete through Phase 14, the desktop client reads and writes,
 and as of 2026-09-02 the whole thing has been **run end to end against a real
 Postfix/Dovecot server** for the first time. What eeemail set out to be — a real
-email client over Delta Chat's encryption — exists and demonstrably works,
-unaudited and still untested against any other mail client.
+email client over Delta Chat's encryption — exists and demonstrably works. As
+of 2026-09-02 it has also been run against **Delta Chat's own engine**, and as
+of 2026-09-03 against **GnuPG**, so it is no longer only tested against itself
+and its outgoing crypto is no longer only read by the library that wrote it.
+Still unaudited, and still untested against Thunderbird, Gmail or any
+mainstream provider.
 
 ```
-cargo nextest run --workspace           1358 passed, 0 failed, 1 skipped
+cargo nextest run --workspace           1362 passed, 0 failed, 1 skipped
 cargo clippy --all-targets -D warnings  clean
 cargo fmt --check                       clean
 scripts/check-fork-patches.sh           clean
 cd desktop && npx tsc --noEmit          clean
 ./scripts/screenshots.sh                9 images, byte-stable across runs
 python3 scripts/e2e-pass.py             all six steps pass
+python3 scripts/interop-pass.py         all steps pass, against upstream v2.59.0
+python3 scripts/gpg-interop-pass.py     all steps pass, against GnuPG 2.4.9
 ```
 
 Run the suite with `cargo nextest`, never `cargo test` — see
@@ -78,6 +84,73 @@ person, across rows sharing an address; verification still is not.
 which releases their held mail. Any test that replies before checking Holding
 dismantles what it is checking. The pass is ordered accordingly, with a comment.
 
+## The interop pass
+
+[`scripts/interop-pass.py`](../scripts/interop-pass.py) runs eeemail against
+**upstream's released `deltachat-rpc-server`**, pinned in
+[`interop-upstream`](interop-upstream) and hash-checked. That binary is not a
+stand-in for Delta Chat: the same release publishes the
+`deltachat-stdio-rpc-server` tarball Delta Chat Desktop installs, so driving it
+is driving Delta Chat's engine. What stays untested against a Delta Chat client
+is its UI.
+
+It shares `scripts/dcrpc.py` with the e2e pass — the wire client only, because a
+framing bug fixed in one copy and not the other gives a green run that tests
+nothing. Steps and account tables stay in each script; the two use different
+mailboxes on purpose (`dana`/`erin` and `frank`/`grace`), since `alice`/`bob`
+carry a completed SecureJoin from every e2e run, which would make the bootstrap
+the pass exists to check unobservable.
+
+### What it found
+
+**1. A stock client will not touch cleartext, in either direction.** Upstream
+defaults `force_encryption` on, and it is not advisory: it refuses to send an
+unencrypted message (`chat.rs:2958`), refuses to *download* one
+(`imap.rs:1694`), and trashes it if it arrives anyway (`receive_imf.rs:509`).
+So ADR 0021's bootstrap can never begin with a shipped-default Delta Chat — the
+first message is dropped before it is parsed and no Autocrypt header is ever
+seen. The pass asserts that default, then turns it off, which is the
+configuration Delta Chat offers for talking to ordinary email and the only one
+in which classic mail flows at all. Everything after that single setting is what
+the pass proves.
+
+**2. ADR 0021 works, and it is the only thing that does.** Against a real
+upstream engine: our first message is cleartext and it agrees; *its* reply is
+cleartext too, because it imported our key and attached it to no contact; we
+adopt its key, encrypt, and it decrypts and verifies; our signature then mints a
+key-contact on its side and its next reply comes back encrypted — with nobody
+having scanned anything. Step 2b is the tripwire for upstream reinstating
+Autocrypt-derived contacts: if it ever passes with an encrypted reply,
+`email::autocrypt::adopt` should be deleted rather than left to race it.
+
+**3. Step 1b is why any of the rest means anything.** It calls
+`apply_eeemail_defaults` on the stock account and requires JSON-RPC `-32601`.
+Point both ends at our own binary and every other step still passes — the
+failure mode this whole script exists to rule out. That negative has been
+observed, not assumed.
+
+**4. A held message is never released to a contact verified on another row.**
+Found while writing step 5; issue #13, **fixed 2026-09-03**. `gating::release`
+selected held mail with `WHERE m.from_id=?`, per contact row, while
+`is_trusted` decided per person across rows. Cold mail is held on the sender's
+*address* row — no signature meant no fingerprint at `receive_imf.rs:588` —
+while SecureJoin verifies their *key* row and calls `release([key_contact])`,
+which found nothing. `is_trusted` on the address row returned true by then
+(`SecurejoinInvited` clears `is_known()`), so the mail was trusted and still
+held until `purge` destroyed it at 30 days. This was finding #4 of the live
+pass one row over.
+
+The row-resolving query is now a shared `gating::same_person` that both call, so
+they cannot drift apart again — that drift *was* the bug. Guarded by
+`gating_tests::test_verifying_a_stranger_releases_the_mail_they_sent_cold`,
+which fails on the old code, and by interop step 5, which now asserts the
+release rather than only the hold.
+
+**5. Threading onto a reply means onto what it replied to.** Adopting a key
+moves the correspondence to the key-contact and so to a second chat. A stock
+client replying there threads onto that message, not onto the cleartext
+original — which is correct, and cost one wrong assertion to see.
+
 ## The four things most likely to bite you
 
 **1. `email::ephemeral::divert` must stay above `select_expired_messages`.**
@@ -130,10 +203,19 @@ unless something was decrypted, so `store` takes `imf_raw` too.
 
 ## Known gaps
 
-- **No interop testing** against Thunderbird, Gmail or a real Delta Chat client
-  (issue #5). SecureJoin in step 3b runs between two eeemail accounts, which is
-  the same core on both sides and so proves nothing about interop. This is still
-  the gap that matters most for a mail client.
+- **Interop is done against Delta Chat's engine and GnuPG, and nothing else**
+  (issue #5).
+  `scripts/interop-pass.py` runs eeemail against upstream's released
+  `deltachat-rpc-server` -- the same binary Delta Chat Desktop ships -- so
+  Autocrypt, SecureJoin in both directions, and outbound classic email are now
+  proven across an implementation boundary. The reason that mattered still
+  holds for everything it does not cover: `e2e-pass.py` step 3b runs the same
+  core on both sides and so proves nothing about interop.
+  `scripts/gpg-interop-pass.py` (issue #14) adds the second OpenPGP
+  implementation: GnuPG decrypts our PGP/MIME and verifies our signature, so
+  our outgoing crypto has now been read by something that is not rPGP.
+  **Thunderbird, Gmail and any mainstream provider remain untested**, and are
+  not automatable in this environment.
 - **Housekeeping cannot be triggered on demand.** `gating::purge` and
   `ephemeral::purge` run only every `HOUSEKEEPING_PERIOD`
   (`scheduler.rs:449-453`), so the 30-day purge deadlines are not exercised
@@ -148,13 +230,28 @@ unless something was decrypted, so `store` takes `imf_raw` too.
 
 ## Suggested next steps, in order
 
-1. Interop against Thunderbird and one real Delta Chat client (#5). Now the
-   most valuable thing left, and the only one the live pass cannot substitute
-   for: SecureJoin in step 3b runs between two eeemail accounts, which is the
-   same core on both sides.
-2. Merge from upstream. The fork is still at `v2.59.0`; the longer that waits,
-   the worse the first merge is — and ADR 0021 now diverges from upstream on
+1. Merge from upstream. The fork is still at `v2.59.0`; the longer that waits,
+   the worse the first merge is — and ADR 0021 diverges from upstream on
    something upstream changed deliberately, so read that ledger note first.
-3. Add `scripts/e2e-pass.py` to CI beside the existing `mail-server` job.
+   This is now first because `scripts/interop-pass.py` exists: until it did,
+   there was no way to tell whether a merge had broken interop.
+2. Add `scripts/e2e-pass.py` to CI beside the existing `mail-server` job, then
+   the interop pass. Constraints already established, so they need not be
+   rediscovered: the `mail-server` job has a 15-minute timeout, no Rust
+   toolchain and no cache, while a cold `cargo build -p deltachat-rpc-server`
+   is 10–20 minutes on its own — so this needs a job with
+   `Swatinem/rust-cache` (`workspaces: core`), not that one. Bring the server
+   up with `docker compose`, **not** the bare `docker run` the job uses today:
+   that passes no `-e ACCOUNTS` and so provisions only alice and bob. The
+   strict profile rewrites the outer Subject and conflicts with the e2e pass's
+   subject assertion, so both passes belong on the permissive container. Cache
+   the upstream binary on `docs/interop-upstream`, or build it from the
+   vendored history, so the job does not depend on GitHub releases being up.
+3. Thunderbird and a mainstream provider (#5) — the half of interop that is
+   left, and the half a script in this environment cannot reach. #14 is done:
+   `scripts/gpg-interop-pass.py` proves our outgoing PGP/MIME and signatures are
+   readable by GnuPG. Thunderbird uses RNP rather than GnuPG, so that narrows
+   the gap rather than closing it, and a real provider still needs credentials
+   CI does not have.
 4. Sending structured data, and a shell-mediated way to open a link — the two
    things Phase 14b deliberately left out.

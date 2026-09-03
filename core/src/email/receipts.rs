@@ -21,16 +21,20 @@
 //!
 //! # Ephemeral messages
 //!
-//! Ephemeral deletion removes the message **locally as well**, and the local
-//! store is the only durable copy of the mailbox
-//! ([ADR 0004](../../../docs/adr/0004-local-store-and-raw-mime.md)). A non-zero
-//! default therefore quietly destroys the user's mail.
+//! Ephemeral deletion removes the message locally as well, and the local store
+//! is the only durable copy of the mailbox
+//! ([ADR 0004](../../../docs/adr/0004-local-store-and-raw-mime.md)). That used
+//! to mean a non-zero default quietly destroyed the user's mail; since
+//! [ADR 0019](../../../docs/adr/0019-recoverable-ephemeral-expiry.md) a fired
+//! timer moves the message to `Trash` for
+//! [`super::ephemeral::DEFAULT_PURGE_DAYS`] first, so it no longer does.
 //!
 //! The machinery here is complete -- a global default, per-contact overrides,
 //! and automatic application to a conversation -- and honours whatever
-//! [`Config::EphemeralDefaultSeconds`] is set to. It ships as `0`. See
-//! `docs/adr/0011-receipts-and-ephemeral.md` for why that is a decision the
-//! user should make with the consequence in front of them.
+//! [`Config::EphemeralDefaultSeconds`] is set to. It ships as `0`, which is now
+//! a preference rather than a safety measure: whether mail expires is the
+//! user's call, and no duration is right for everyone's. Revisited and
+//! confirmed in issue #3; see ADR 0019.
 //!
 //! The default is applied when the **first** message is sent to a conversation.
 //! Not on every send, or turning the timer off would not stick; not at chat

@@ -93,6 +93,28 @@ them, failing to derive a key-contact must never fail reception.
   affordances ([ADR 0016](0016-structured-email.md)) that require verification
   still require it. This ADR moves nobody into the verified set.
 
+## Amendment — 2026-09-02, after the interop pass
+
+`scripts/interop-pass.py` confirmed every step of the reasoning above against
+upstream's own released binary: a stock client's reply to our cleartext really
+is cleartext, we really do adopt the key from its header, and it really does
+decrypt and verify what we then send. The bootstrap works, and against a second
+implementation rather than against ourselves.
+
+It also found the limit. Upstream defaults `force_encryption` on, which is not
+advisory — a stock client refuses to send unencrypted mail (`chat.rs:2958`),
+refuses to *download* it (`imap.rs:1694`), and trashes it if it arrives anyway
+(`receive_imf.rs:509`). So the first consequence above, "ADR 0006's default
+becomes reachable", holds for correspondents on ordinary mail, and **not** for a
+Delta Chat client in its shipped configuration: our opening cleartext message is
+discarded before it is parsed, so no Autocrypt header is ever exchanged and
+there is nothing to adopt. With such a correspondent the only paths to
+encryption are SecureJoin, or their turning that setting off.
+
+This does not change the decision. It narrows the claim: the rung this ADR adds
+sits below verification and above cleartext, and it is reachable with anyone
+whose client will accept a cleartext message at all.
+
 ## Sources
 
 - [Autocrypt Level 1](https://autocrypt.org/level1.html) — header format, `prefer-encrypt`, and the explicit statement that Autocrypt protects against passive, not active, adversaries

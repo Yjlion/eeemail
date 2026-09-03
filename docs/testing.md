@@ -65,3 +65,38 @@ cargo test --workspace --locked --doc
 Anything in `core/src/email/` that reads the clock should take timestamps as
 parameters rather than calling `SystemTime::now()` internally. That makes tests
 deterministic regardless of runner, and is better design besides.
+
+## The live passes
+
+Three Python scripts test things a unit test cannot, because they need a real
+IMAP/SMTP server, a second process, or a second OpenPGP implementation. None of
+them runs in CI yet — see the constraint in [`handoff.md`](handoff.md) — so they
+are run by hand, and they are the part of the suite a merge from upstream most
+needs.
+
+All three need the test mail server up, and need it brought up from the compose
+file rather than the bare `docker run` in [`../server/README.md`](../server/README.md):
+that recipe passes no `ACCOUNTS` and provisions only `alice` and `bob`.
+
+```sh
+cd server/compose && docker compose up -d --build && python3 smoke-test.py
+cd ../.. && cd core && cargo build -p deltachat-rpc-server && cd ..
+```
+
+| Script | What it proves | Needs |
+|---|---|---|
+| [`../scripts/e2e-pass.py`](../scripts/e2e-pass.py) | eeemail works end to end against a real server: setup, a Cc'd message with an attachment, gating, a recoverable expiry, encryption at rest. Both sides are our own core, so it proves **no** interop. | the server |
+| [`../scripts/interop-pass.py`](../scripts/interop-pass.py) | Autocrypt and SecureJoin against upstream's released `deltachat-rpc-server` — the same binary Delta Chat Desktop ships. | the server, and the pinned release (downloaded and hash-checked) |
+| [`../scripts/gpg-interop-pass.py`](../scripts/gpg-interop-pass.py) | our outgoing PGP/MIME and signatures are readable by GnuPG, an OpenPGP implementation sharing no code with rPGP. | the server, and `gpg` |
+
+Run them on the **permissive** container. The `STRICT_E2EE=1` profile rewrites
+`Subject` at submission, and all three assert on subjects.
+
+Each script prints one `PASS` line per assertion and exits non-zero with a
+numbered list if anything failed. `--keep` leaves the temporary accounts
+directories behind for inspection, and `--log RUST_LOG` lets the servers write
+to stderr.
+
+**A green unit-test run does not mean these pass.** That is the entire reason
+they exist: upstream changes crypto and protocol code routinely, and
+`e2e-pass.py` running the same core on both sides cannot see it.

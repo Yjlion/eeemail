@@ -71,6 +71,16 @@ Gating the send and receive sites needs a decided fallback, not just a `#[cfg]`:
 outgoing mail simply omits the iroh header, and incoming iroh headers are
 ignored rather than stubbed. Both are safe — they degrade to ordinary email.
 
+**These two cannot be gated independently, and that is the whole difficulty.**
+`webxdc = ["peer-channels"]`, so dropping `peer-channels` from `default` while
+`webxdc` stays in it changes nothing: cargo re-enables it through the
+dependency. Whoever does the small one has to do the large one in the same
+change. Measured 2026-09-02 (issue #6): `peer_channels` has four production
+reference sites outside its own module, `webxdc` has around 36 files with 12
+sites in `chat.rs`/`chat/` and 5 in `receive_imf`. So this is a phase-sized
+piece of work rather than the afternoon the `peer-channels` row makes it look
+like, and `webxdc`'s "do it last" below is really "do them both last".
+
 ## `webxdc` — mini-apps
 
 Chat-app feature with no email-client analogue. Depends on `peer-channels` for

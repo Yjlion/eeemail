@@ -1092,6 +1092,12 @@ impl Context {
                 .to_string(),
         );
         res.insert(
+            "subject_in_body",
+            self.get_config_bool(Config::SubjectInBody)
+                .await?
+                .to_string(),
+        );
+        res.insert(
             "force_encryption",
             self.get_config_bool(Config::ForceEncryption)
                 .await?
