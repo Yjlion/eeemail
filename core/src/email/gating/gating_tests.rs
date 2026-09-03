@@ -80,8 +80,9 @@ async fn test_held_mail_is_still_downloaded_and_readable() -> Result<()> {
     // Holding is a view, not a refusal to fetch: the user must be able to look
     // at what arrived before deciding about the sender.
     let msg = crate::message::Message::load_from_db(&t, msg_id).await?;
-    // Contains rather than equals: core prepends the subject to the body of
-    // classic mail, which is its own known problem and not this one's.
+    // Contains rather than equals: this account never had
+    // `email::policy::apply_defaults` run on it, so `SubjectInBody` is still
+    // upstream's default and the subject is prepended to the body.
     assert!(msg.get_text().contains("body"), "got {:?}", msg.get_text());
     Ok(())
 }
@@ -248,6 +249,50 @@ async fn test_an_encrypted_reply_from_someone_you_wrote_to_is_not_held() -> Resu
         !tags.system.contains(&SystemTag::Holding),
         "an encrypted reply from someone the user wrote to was held: {:?}",
         tags.system
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_verifying_a_stranger_releases_the_mail_they_sent_cold() -> Result<()> {
+    let mut tcm = TestContextManager::new();
+    let alice = tcm.alice().await;
+    let bob = tcm.bob().await;
+    alice.allow_unencrypted().await?;
+    crate::email::policy::apply_defaults(&alice).await?;
+    alice.set_config_bool(Config::InboxGating, true).await?;
+    let bob_addr = bob.get_config(Config::Addr).await?.unwrap();
+
+    // Cold mail, unsigned, from someone Alice has never written to. It is
+    // attributed to Bob's *address* row: there is no signature, so
+    // `receive_imf` has no fingerprint to attach.
+    let msg_id = recv(&alice, &bob_addr, "cold@example.net").await?;
+    assert_eq!(
+        tags::of_msg(&alice, msg_id).await?.system,
+        vec![SystemTag::Holding]
+    );
+    let address_row = crate::message::Message::load_from_db(&alice, msg_id)
+        .await?
+        .get_from_id();
+
+    // Alice scans Bob's code. SecureJoin verifies his *key* row and releases
+    // against that -- a different row from the one holding the message. Nothing
+    // before this point writes to Bob, which would make him known and release
+    // the mail on its own, testing nothing.
+    tcm.execute_securejoin(&alice, &bob).await;
+
+    let key_row = crate::contact::Contact::get_by_id(&alice, address_row)
+        .await?
+        .is_key_contact();
+    assert!(!key_row, "the held message should be on the address row");
+
+    assert!(
+        held(&alice).await?.is_empty(),
+        "cold mail stayed held after its sender was verified"
+    );
+    assert_eq!(
+        tags::of_msg(&alice, msg_id).await?.system,
+        vec![SystemTag::Inbox]
     );
     Ok(())
 }

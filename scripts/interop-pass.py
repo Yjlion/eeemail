@@ -614,16 +614,23 @@ def step5_securejoin_they_invite(upstream: Rpc, grace: int, ee: Rpc, frank: int)
           "a stranger running someone else's client is held, not delivered")
     check(bool(ee.call("get_message", frank, msg_id).get("text")),
           "and stays readable rather than quarantined")
-    # Deliberately not asserted: that verifying grace below releases this. It
-    # does not -- `gating::release` selects held mail per contact *row* while
-    # `is_trusted` decides per person, so mail held on the address row is never
-    # found when the key row is verified. That is issue #13, with its own
-    # regression test to write; it is not this pass's to hide or to fix.
 
     qr = upstream.call("get_chat_securejoin_qr_code", grace, None)
     ee.call("secure_join", frank, qr, timeout=SECUREJOIN_TIMEOUT)
     await_verified(upstream, grace, f"frank@{DOMAIN}", "frank, at the stock end")
     await_verified(ee, frank, f"grace@{DOMAIN}", "grace, at our end")
+
+    # The cold message above is held on grace's *address* row -- unsigned mail
+    # carries no fingerprint -- while SecureJoin verifies her *key* row. Those
+    # being different rows is what issue #13 was: `release` selected per row
+    # while `is_trusted` decided per person, so this message stayed held, and
+    # trusted, until `purge` destroyed it at 30 days. Asserted here because a
+    # unit test cannot show it across an implementation boundary.
+    def released():
+        tags = ee.call("get_message_tags", frank, msg_id)["system"]
+        return "holding" not in tags
+    wait_for(released, "the held message to be released by verification", timeout=60)
+    check(True, "verifying a stranger releases the mail she sent cold (issue #13)")
 
     subject = f"[{TOKEN}] Verified across engines"
     ee.call("send_email", frank, {"to": [f"grace@{DOMAIN}"], "cc": [], "bcc": []},

@@ -76,20 +76,7 @@ pub async fn is_trusted(context: &Context, contact_id: ContactId) -> Result<bool
     // Only the *known* half carries across rows. Verification is a claim about
     // a key surviving an active attacker, and an address is not a key -- so it
     // stays where it was earned, and nothing here makes anyone verified.
-    let addr = contact.get_addr();
-    if addr.is_empty() {
-        return Ok(false);
-    }
-    let same_person: Vec<ContactId> = context
-        .sql
-        .query_map_vec(
-            "SELECT id FROM contacts
-             WHERE addr=?1 COLLATE NOCASE AND id!=?2 AND id>?3 AND blocked=0",
-            (addr, contact_id, ContactId::LAST_SPECIAL),
-            |row| Ok(row.get::<_, ContactId>(0)?),
-        )
-        .await?;
-    for other_id in same_person {
+    for other_id in same_person(context, &contact).await? {
         if let Ok(other) = Contact::get_by_id(context, other_id).await
             && other.origin.is_known()
         {
@@ -97,6 +84,37 @@ pub async fn is_trusted(context: &Context, contact_id: ContactId) -> Result<bool
         }
     }
     Ok(false)
+}
+
+/// The *other* contact rows that are the same person as `contact`.
+///
+/// Core keys encryption off the contact row, so one correspondent is routinely
+/// several rows: an address-contact from the mail you sent them, a key-contact
+/// from the encrypted reply that came back ([ADR 0021]).
+///
+/// Shared by [`is_trusted`] and [`release`] deliberately. Those two disagreeing
+/// about which rows are the same person is not a hypothetical -- it is how held
+/// mail went missing: trust was decided per person while release selected per
+/// row, so a message could be trusted and still held until it purged.
+///
+/// Excludes `contact` itself, the special rows at or below
+/// [`ContactId::LAST_SPECIAL`], and blocked rows.
+///
+/// [ADR 0021]: ../../../docs/adr/0021-autocrypt-key-contacts.md
+async fn same_person(context: &Context, contact: &Contact) -> Result<Vec<ContactId>> {
+    let addr = contact.get_addr();
+    if addr.is_empty() {
+        return Ok(Vec::new());
+    }
+    context
+        .sql
+        .query_map_vec(
+            "SELECT id FROM contacts
+             WHERE addr=?1 COLLATE NOCASE AND id!=?2 AND id>?3 AND blocked=0",
+            (addr, contact.id, ContactId::LAST_SPECIAL),
+            |row| Ok(row.get::<_, ContactId>(0)?),
+        )
+        .await
 }
 
 /// Whether gating is on, from [`Config::InboxGating`].
@@ -175,6 +193,14 @@ async fn sender_of(context: &Context, msg_id: MsgId) -> Result<Option<(ContactId
 /// Called when a contact's origin is scaled up or they become verified, which
 /// are the two ways trust is gained. Takes a slice because both call sites have
 /// one.
+///
+/// Releases across every row that is the same person, not just the row passed
+/// in. The two are routinely different rows: cold mail from a stranger is held
+/// on their *address* row, because an unsigned first message carries no
+/// fingerprint to attach, while SecureJoin verifies their *key* row and calls
+/// this with that. Selecting on the key row alone finds nothing, and the mail
+/// stays held -- trusted by [`is_trusted`] and invisible -- until [`purge`]
+/// destroys it at [`HOLD_DAYS`].
 pub async fn release(context: &Context, contact_ids: &[ContactId]) -> Result<usize> {
     let mut released = 0usize;
     for &contact_id in contact_ids {
@@ -187,17 +213,26 @@ pub async fn release(context: &Context, contact_ids: &[ContactId]) -> Result<usi
         if !is_trusted(context, contact_id).await? {
             continue;
         }
-        let msgs: Vec<MsgId> = context
-            .sql
-            .query_map_vec(
-                "SELECT h.msg_id FROM held_msgs h
-                 JOIN msgs m ON m.id=h.msg_id
-                 WHERE m.from_id=?",
-                (contact_id,),
-                |row| Ok(row.get::<_, MsgId>(0)?),
-            )
-            .await?;
-        released = released.saturating_add(unhold(context, &msgs).await?);
+        // Trust is decided per person, so release has to be too. Widening the
+        // *release* set deliberately does not widen the *trust* decision above:
+        // becoming trusted still has to be earned on a row of one's own.
+        let mut sender_rows = vec![contact_id];
+        if let Ok(contact) = Contact::get_by_id(context, contact_id).await {
+            sender_rows.extend(same_person(context, &contact).await?);
+        }
+        for from_id in sender_rows {
+            let msgs: Vec<MsgId> = context
+                .sql
+                .query_map_vec(
+                    "SELECT h.msg_id FROM held_msgs h
+                     JOIN msgs m ON m.id=h.msg_id
+                     WHERE m.from_id=?",
+                    (from_id,),
+                    |row| Ok(row.get::<_, MsgId>(0)?),
+                )
+                .await?;
+            released = released.saturating_add(unhold(context, &msgs).await?);
+        }
     }
     Ok(released)
 }
