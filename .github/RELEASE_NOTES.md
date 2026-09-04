@@ -104,6 +104,7 @@ command-line tools are for.
 
 ```
 cargo nextest run --workspace              1365 passed, 0 failed, 1 skipped
+  ... --all-features                       1375 passed, 0 failed, 1 skipped
 cargo test --workspace --locked --doc      0 failed
 cargo clippy --workspace --all-targets     clean, default and --all-features
 cargo fmt --all -- --check                 clean
@@ -118,6 +119,17 @@ python3 scripts/gpg-interop-pass.py        all steps pass, against GnuPG 2.4.9
 
 Clippy runs with `-Dwarnings`, in both feature configurations, because
 `--all-features` alone never lints the default build — which is the one we ship.
+The tests run in both configurations for the same reason, and `--all-features`
+carries ten tests the default build does not.
+
+One flake was seen on a CI runner and not reproduced locally:
+`context_tests::test_cache_is_cleared_when_io_is_started` failed once on
+`Logged an unexpected warning: no such table: chats`. It is a race in an
+upstream test rather than anything here — the location loop's first tick warns
+against the empty database of a pseudo-configured account, and the test forbids
+unexpected warnings, so whether it finishes first is timing. Neither
+`location.rs` nor that test is touched by this release, and the job passed on
+re-run.
 
 The live passes cover the rename and the new default across the wire, not only
 in Rust: `e2e-pass.py` step 1 asserts `get_unverified_trash_days` is 30, and
@@ -128,13 +140,18 @@ The `.deb` was built and unpacked to check it: `usr/bin/eeemail`, a
 `usr/share/applications/eeemail.desktop` with `Exec=eeemail`, and icons at three
 sizes. The `.AppImage` could not be built where this was prepared —
 `linuxdeploy-plugin-gtk` hardcodes a gdk-pixbuf path that modern distributions
-no longer use — so it is the one artefact that has never been produced.
+no longer use — so CI is the first place it has ever existed.
 
-**Three things no test suite covers, because none can be reached from CI.**
-All must be done before the tag:
+**A `workflow_dispatch` rehearsal built every artefact on both platforms**, and
+each was downloaded and opened rather than taken on trust: all six checksums
+verify; the `.deb` carries `usr/bin/eeemail`, a desktop entry with
+`Exec=eeemail`, icons at three sizes and `Depends: libwebkit2gtk-4.1-0,
+libgtk-3-0`; the `.AppImage` extracts to an `AppRun`, a desktop entry, an icon
+and a valid ELF; the NSIS installer built; and the archives hold the two
+command-line tools and nothing else.
 
-0. **Rehearse the release with `workflow_dispatch`**, which builds and uploads
-   artefacts without cutting a tag, and confirm the `.AppImage` is among them.
+**Two things no test suite covers, because neither can be reached from CI.**
+Both must be done before the tag:
 
 1. **Install each artefact on a clean machine** and launch **from the
    applications menu** — a launcher entry is the thing being tested, so starting
