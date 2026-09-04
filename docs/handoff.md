@@ -1,6 +1,7 @@
 # Handoff — Phases 10–14b, the first live pass, and v0.3.0
 
-**Written 2026-09-01, updated 2026-09-03.** Branch `phase-0-foundation`.
+**Written 2026-09-01, updated 2026-09-04.** Branch `main`; `v0.3.0` is tagged
+and published.
 
 ## v0.3.0 — the release you install
 
@@ -31,7 +32,7 @@ an archive and remembered a path. v0.3.0 is the first version a person installs.
 - **[`INSTALL.md`](INSTALL.md)** is the end-user document the project did not
   have.
 
-### Four traps this left behind
+### Five traps this left behind
 
 **1. Migration 171 renames data three ways, and each fails silently.** The
 `Config` key rename (`ephemeral_trash_days` → `trash_purge_days`) is the sharp
@@ -62,6 +63,59 @@ waiting. Re-introducing a stored deadline would be a second source of truth that
 silently outvotes the setting. Guarded by
 `gating_tests::test_shortening_the_window_moves_mail_already_waiting`.
 
+**5. One screenshot is not actually deterministic, and the README claims they
+all are.** `fixtures.ts` pins `NOW` to a constant precisely so screenshots do
+not drift, but `views/reading.ts:91` reads the *wall clock*
+(`Date.now()`) to render the trash notice's "still here for N more days". The
+number therefore falls by one every real day, so `trash.png` and
+`trash-swept.png` change on a run that changed no code — while the README says
+"they regenerate identically and a change in the images is a change in the UI".
+`screenshots.sh` and `e2e-pass.py` step 6 both only compare two runs *on the
+same day*, so neither can see it. The fix is to thread the fixture clock through
+in demo mode rather than to regenerate the images.
+
+## Shipping v0.3.0
+
+Tagged `v0.3.0` on `main` and published as a prerelease on 2026-09-04, with
+`.deb`, `.AppImage`, an NSIS `.exe`, both tool archives and a `.sha256` beside
+each. Every asset was downloaded *from the release page* and checked rather than
+read off a build log: checksums verify, the `.deb` carries `usr/bin/eeemail`,
+its desktop entry and icons at three sizes, the `.AppImage` extracts to a valid
+ELF, and the `.exe` is a real NSIS installer.
+
+The release path is `push` of a `v*` tag. `workflow_dispatch` builds and uploads
+the same artefacts **without** publishing, which is the rehearsal, and it is
+worth doing every time — it is how the `.AppImage` was first proved buildable.
+
+### What shipping it found
+
+**1. The Windows job downloads its bundler at build time, and that is a coin
+flip.** The tag build failed after compiling Windows cleanly, on
+`https://github.com/tauri-apps/binary-releases/.../nsis-3.zip: Connection
+Failed`. Unpinned, unretried, third-party, on every Windows release. The
+rehearsal forty minutes earlier had succeeded on the same source, so no amount
+of rehearsing prevents it; re-running the failed job was enough.
+
+**2. A Windows blip blocks a Linux release that already built.** `Publish
+release` is `needs: build`, so one red matrix leg skips publication of a leg
+that succeeded. `fail-fast: false` exists in the same file to make partial
+failure survivable and the comment above it says "a partial release is easier to
+complete than to reconstruct" — the publish gate quietly undoes that. Worth
+either a retry on the bundle step or a publish that tolerates partial success.
+
+**3. CI runs the test suite in two configurations and it is easy to verify only
+one.** `cargo nextest run --workspace` is 1365 tests; `--all-features` is 1375.
+Verifying the default alone produced a green local run and a red CI, and the
+release notes had the same single-line gap. Both numbers are now recorded.
+
+**4. `test_cache_is_cleared_when_io_is_started` is flaky, upstream, and will be
+seen again.** It fails on `Logged an unexpected warning: no such table: chats`.
+The location loop's first tick warns against the empty database of a
+pseudo-configured account and `TestContext` fails any unexpected warning, so
+whether the test finishes first is timing. Does not reproduce locally in either
+configuration; passed on re-run. Not ours — neither `location.rs` nor the test
+is touched by this fork.
+
 ## Where the project is
 
 The engine is complete through Phase 14, the desktop client reads and writes,
@@ -74,29 +128,26 @@ and its outgoing crypto is no longer only read by the library that wrote it.
 Still unaudited, and still untested against Thunderbird, Gmail or any
 mainstream provider.
 
-Green as of 2026-09-03, **on the tree before the v0.3.0 changes above**:
+Green on the released tree, 2026-09-04, everything re-run:
 
 ```
-cargo nextest run --workspace           1362 passed, 0 failed, 1 skipped
-cargo clippy --all-targets -D warnings  clean
-cargo fmt --check                       clean
-python3 scripts/e2e-pass.py             all six steps pass
-python3 scripts/interop-pass.py         all steps pass, against upstream v2.59.0
-python3 scripts/gpg-interop-pass.py     all steps pass, against GnuPG 2.4.9
-```
-
-Re-run on the current tree:
-
-```
-scripts/check-fork-patches.sh           clean
+cargo nextest run --workspace              1365 passed, 0 failed, 1 skipped
+  ... --all-features                       1375 passed, 0 failed, 1 skipped
+cargo test --workspace --locked --doc      0 failed
+cargo clippy --workspace --all-targets     clean, both configs, -Dwarnings
+cargo fmt --all -- --check                 clean
+scripts/check-fork-patches.sh              clean
 cd desktop && npm run check && npm run build   clean
-./scripts/screenshots.sh                11 images, byte-stable across runs
+./scripts/screenshots.sh                   11 images, byte-stable across runs
+server/compose/smoke-test.py               all checks pass
+python3 scripts/e2e-pass.py                all six steps pass
+python3 scripts/interop-pass.py            all steps pass, against upstream v2.59.0
+python3 scripts/gpg-interop-pass.py        all steps pass, against GnuPG 2.4.9
 ```
 
-**The cargo lines and the three live passes have not been re-run since the
-v0.3.0 changes** — there was no Rust toolchain where they were made. That is the
-first item under "Suggested next steps" and it is listed in
-`.github/RELEASE_NOTES.md` as blocking the tag.
+**Run both nextest configurations.** CI does, and `--all-features` carries ten
+tests the default build does not; the default alone is a green run that does not
+mean a green CI. See "What shipping it found" above.
 
 Run the suite with `cargo nextest`, never `cargo test` — see
 [`testing.md`](testing.md) for why.
@@ -294,15 +345,22 @@ unless something was decrypted, so `store` takes `imf_raw` too.
   (`scheduler.rs:449-453`), so the 30-day deadlines are not exercised live.
   Divert-to-trash and restore are. Unit tests cover all three deadlines with a
   shifted clock; what is untested live is the scheduling, not the logic.
-- **The `.AppImage` has never been built, and no installer has been installed.**
-  `tauri build --bundles deb` was run and the `.deb` unpacked and checked, so
-  the launcher entry, the binary rename and the icons are verified. AppImage
-  bundling fails on a developer machine for an unrelated reason --
-  `linuxdeploy-plugin-gtk` hardcodes `/usr/lib/gdk-pixbuf-2.0/2.10.0`, which
-  modern gdk-pixbuf does not provide -- so it needs a `workflow_dispatch`
-  rehearsal on an Ubuntu runner. Nothing has been *installed* anywhere; the
-  Windows check matters most, because `%APPDATA%` is the path that could not
-  work before.
+- **No installer has been installed anywhere.** This is the largest untested
+  surface in v0.3.0. Every artefact is now *built* and structurally verified --
+  the `.AppImage` too, first produced by the CI rehearsal, since
+  `linuxdeploy-plugin-gtk` hardcodes `/usr/lib/gdk-pixbuf-2.0/2.10.0` and cannot
+  bundle on a modern developer machine. But structure is not launch. Two checks
+  remain, both needing a human at a machine, and they were **not** done before
+  the tag:
+    1. Install each artefact on a clean machine and launch it **from the
+       applications menu** -- the launcher entry is the thing under test, so
+       starting it from a terminal proves nothing. Dialog appears, dismiss, set
+       up an account, send and receive, relaunch, dialog stays gone.
+    2. On Windows, confirm the account directory is under `%APPDATA%\eeemail`.
+       Do this one first: it is the bug v0.3.0 exists to fix, it shipped
+       silently through eight phases of green release builds, and nothing in CI
+       can see it. If it is wrong, a `v0.3.1` is cheap and the prerelease flag
+       means nobody is treating this as stable.
 - **Issue #2** — upstream drops recipients whose key is missing from the
   envelope while leaving them in the header. eeemail records who, and does not
   change the behaviour.
@@ -311,13 +369,39 @@ unless something was decrypted, so `store` takes `imf_raw` too.
   message. The composer says so rather than hiding it.
 - **Nothing has been audited.**
 
+## The issue tracker, swept 2026-09-03
+
+Worth knowing before trusting an issue title: **three of eleven were stale** --
+the work had landed and nobody closed them. Read the code before believing an
+issue describes the present.
+
+Closed: **#13** (held mail never released to a contact verified on another row
+-- a real bug; `gating::same_person` is now shared by `is_trusted` and
+`release`, which is what stops them drifting apart again), **#8** (subject
+duplicated into the body, fixed behind `Config::SubjectInBody` with upstream's
+behaviour as the compile-time default, so zero upstream tests changed), **#14**
+(the GnuPG pass), **#2** and **#3** (decisions, recorded in ADRs 0006 and 0019
+rather than left open).
+
+Open, with the stale parts corrected in a comment: **#1** (blob encryption is
+implemented and wired in; what is left is `imex` tarring blobs raw, untested),
+**#10** (`get_message_rows` batches the list already; only the deliberate `LIKE`
+cap and paging remain), **#4** (composer, setup, contacts and QR display all
+exist -- only camera scanning is missing, so the title overstates the gap by
+three features), **#5**, **#9**, and **#6** -- whose comment records the finding
+that `webxdc = ["peer-channels"]` means the two cannot be gated independently,
+making it a phase-sized job rather than the afternoon its row implies.
+
+One bug was found that no issue covered: `Message::save_file` copied blobs
+byte-for-byte, so "save attachment" wrote an `EEEBLOB1` container when blob
+encryption was on. Fixed.
+
 ## Suggested next steps, in order
 
-0. **Run what v0.3.0 could not.** `.github/RELEASE_NOTES.md` lists it: the whole
-   cargo suite, the three live passes, and a real install per platform. None of
-   it needs a decision, all of it needs a toolchain this was not written on, and
-   the release notes say plainly that it has not been done rather than implying
-   it has.
+0. **Install v0.3.0 and launch it from a menu**, on Linux and on Windows. The
+   cargo suite and the three live passes have now been run on the released tree
+   (above); this is the only part of the pre-tag checklist still outstanding,
+   and it went out untested. See "Known gaps".
 1. Merge from upstream. The fork is still at `v2.59.0`; the longer that waits,
    the worse the first merge is — and ADR 0021 diverges from upstream on
    something upstream changed deliberately, so read that ledger note first.
