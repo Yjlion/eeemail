@@ -1,7 +1,140 @@
 # Handoff — Phases 10–14b, the first live pass, and v0.3.0
 
 **Written 2026-09-01, updated 2026-09-04.** Branch `main`; `v0.3.0` is tagged
-and published.
+and published, **and does not work** — see immediately below.
+
+## v0.3.1 — what installing v0.3.0 found
+
+The step this document listed as next ("Install v0.3.0 and launch it from a
+menu") was done. **The application did not work.** It installed correctly, drew
+its window, and put an error where the mailbox should have been:
+
+```
+Command plugin:event|listen not allowed by ACL
+```
+
+**There was no `desktop/src-tauri/capabilities/` directory.** Tauri 2 resolves
+its ACL by globbing that directory at build time; with no matches the compiled
+`gen/schemas/capabilities.json` is `{}`. The four commands the shell registers
+in `generate_handler!` are not ACL-checked and worked fine — but `listen()` is
+the *core event plugin*, and it is. `desktop/src/rpc.ts` attaches the
+`rpc-message` stream in the `Rpc` constructor and `call()` awaits it before
+every request, so nothing resolved: no accounts, no mail, no events, on Linux
+and Windows alike. Not a Windows bug. **Every platform, every install.**
+
+### Why nothing here could see it, which is the part worth keeping
+
+Nothing automated in this repository exercises the real Tauri IPC path.
+
+- `scripts/screenshots.sh` photographs the **browser demo build**
+  (`VITE_EEEMAIL_DEMO=1`), which answers from `desktop/src/fixtures.ts` and
+  never calls `invoke`. `client.ts` picks the demo client before `rpc.ts` is
+  even imported.
+- `scripts/e2e-pass.py` drives `deltachat-rpc-server` over stdio. **The app does
+  not use that binary** — it embeds the engine in-process. ADR 0022 says so and
+  the archive comment says so, and it is exactly why the pass proves nothing
+  about the shell.
+- Every job in `ci.yml` was `ubuntu-latest`. The `windows-latest` leg of
+  `release.yml` compiles and packages and runs nothing.
+
+1375 tests, three live passes and eleven byte-stable screenshots were green
+against an application that could not open a mailbox. This is the second bug of
+that exact shape — `accounts_dir()` was the first — and ADR 0022 had already
+written down "no test could have caught it" without drawing the conclusion.
+
+### What v0.3.1 changes
+
+- **`desktop/src-tauri/capabilities/default.json`**, granting
+  `core:event:default` to the `main` window. `tauri.conf.json` now spells out
+  `"label": "main"` so the capability's target is written down rather than
+  inferred. `gen/` stays gitignored; `capabilities/` is source.
+- **CI and the release workflow assert the *generated* ACL** grants an event
+  permission. Checking the source file would prove nothing — it was the compiled
+  artefact that was empty.
+- **A `windows` job in `ci.yml`.** Build-only on Windows for eight releases is
+  the structural cause of both bugs.
+- **The desktop shell has tests**, its first: eleven, where there were none.
+  `data_dir()` was written with `#[cfg]`, so it could only ever be checked on
+  the platform it was wrong about; the platform is now a parameter and the
+  Windows rule is tested from Linux. One test found a real defect while being
+  written — the "an empty `XDG_DATA_HOME` is not a path" rule sat in the wrapper
+  that reads the real environment rather than in the function under test, so it
+  was never exercised.
+
+  **`test_the_frontend_is_allowed_to_hear_the_engine` is the one that matters.**
+  It builds the real `generate_context!()` and asks the compiled
+  `RuntimeAuthority` whether `plugin:event|listen` resolves for the `main`
+  window — the same authority the running app consults, not a re-reading of the
+  source file. Moving `capabilities/` aside and re-running it reproduces the
+  shipped failure verbatim (`plugin:event|listen is refused for the `main`
+  window`), which is how the diagnosis was confirmed rather than assumed. It
+  runs on Linux and on the new Windows job, needs no display, and is cheap.
+- **A failed launch on Windows says why.** `windows_subsystem = "windows"` means
+  a release build has no console, so `main`'s error and every `eprintln!` went
+  to a stderr that does not exist — which is how the `accounts_dir()` bug stayed
+  invisible for eight releases. `report_fatal` now shows a `MessageBoxW` with
+  the error chain.
+- **The release archive holds the app**, not only the two tools, and runs
+  unzipped with its profile in `data/` beside the executable. Reproducing this
+  bug required an installation, because installing was the only way to run it.
+  [ADR 0024](adr/0024-portable-archives.md); ADR 0022 carries a dated amendment.
+  The Windows zip carries the WebView2 bootstrapper and an `eeemail.cmd` that
+  installs it, since only the NSIS installer bootstrapped the runtime.
+- **`CLAUDE.md`** at the root, which did not exist.
+
+### What was actually verified, and what was not
+
+**Verified here.** The ACL test above, failing on the v0.3.0 arrangement and
+passing on this one. The portable rule end to end: the real binary, copied into
+a scratch folder beside an `eeemail-portable` marker, launched under `xvfb-run`,
+put its profile in `<folder>/data/accounts/` and wrote nothing to
+`~/.local/share/eeemail`. Then the gate:
+
+```
+cargo nextest run --workspace --locked     1376 passed, 0 failed, 1 skipped
+  ... --all-features                       1386 passed, 0 failed, 1 skipped
+cargo test --workspace --locked --doc      0 failed
+cargo clippy --workspace --all-targets     clean, both configs, -Dwarnings
+cargo fmt --all -- --check                 clean
+scripts/check-fork-patches.sh              clean
+desktop: npm run check, npm run build      clean
+scripts/screenshots.sh                     11 images, byte-stable
+```
+
+The three live passes were **not** re-run: they exercise the engine, and the
+whole diff to `core/` in this release is two version numbers in `Cargo.lock`.
+Docker is not available where this was prepared either.
+
+**Not verified, and it is the same gap as last time.** The webview never
+executed a line of JavaScript in this environment — WebKitGTK's web process does
+not start under `xvfb-run` here, so probes on `rpc_send` and `first_run_pending`
+stayed silent whether the ACL was granted or not. The app starts, opens its
+accounts directory and stays up; what it draws was not observed. **Nobody has
+seen v0.3.1 render a mailbox.** That check needs a human at a machine, it is
+what found this bug, and it is item 0 below.
+
+One small thing running it did find: on Linux the system webview keeps an HSTS
+cache at `~/.local/share/eeemail/hsts-storage.sqlite` regardless of the portable
+marker, because WebKitGTK derives that path from the program name. It holds no
+mail. `PORTABLE.md` says so rather than claiming the folder is airtight.
+
+### What this leaves open
+
+**The real IPC path is still untested end to end.** The guards catch an empty ACL and not
+the next thing. Running the shell after touching it is the only check there is:
+
+```sh
+cd desktop && EEEMAIL_ACCOUNTS_DIR=/tmp/eeemail npm run tauri dev
+```
+
+**`%APPDATA%` is the roaming profile.** A SQLite mailbox and the whole blobdir
+in a roaming profile means a domain-joined machine tries to sync it at logon,
+and copying a live SQLite file is a corruption vector. `%LOCALAPPDATA%` is
+right; it needs a migration and so is not in a fix release. Deliberately left.
+
+**`stage_attachment` reduces a filename with `Path::file_name()`**, which strips
+`..\` correctly on Windows but lets `name:stream` create an NTFS alternate data
+stream and lets `CON`, `NUL` and `COM1` through. Untested, unfixed, noted.
 
 ## v0.3.0 — the release you install
 
@@ -104,7 +237,8 @@ complete than to reconstruct" — the publish gate quietly undoes that. Worth
 either a retry on the bundle step or a publish that tolerates partial success.
 
 **3. CI runs the test suite in two configurations and it is easy to verify only
-one.** `cargo nextest run --workspace` is 1365 tests; `--all-features` is 1375.
+one.** `cargo nextest run --workspace` was 1365 tests at v0.3.0; `--all-features`
+was 1375. (v0.3.1 adds eleven desktop tests to each: 1376 and 1386.)
 Verifying the default alone produced a green local run and a red CI, and the
 release notes had the same single-line gap. Both numbers are now recorded.
 
@@ -345,22 +479,24 @@ unless something was decrypted, so `store` takes `imf_raw` too.
   (`scheduler.rs:449-453`), so the 30-day deadlines are not exercised live.
   Divert-to-trash and restore are. Unit tests cover all three deadlines with a
   shifted clock; what is untested live is the scheduling, not the logic.
-- **No installer has been installed anywhere.** This is the largest untested
-  surface in v0.3.0. Every artefact is now *built* and structurally verified --
-  the `.AppImage` too, first produced by the CI rehearsal, since
-  `linuxdeploy-plugin-gtk` hardcodes `/usr/lib/gdk-pixbuf-2.0/2.10.0` and cannot
-  bundle on a modern developer machine. But structure is not launch. Two checks
-  remain, both needing a human at a machine, and they were **not** done before
-  the tag:
+- **Launching an installed build is still the only real test of the app**, and
+  it is done by hand. This was called "the largest untested surface in v0.3.0"
+  and it was: the first person to install it found the app could not open a
+  mailbox at all. Structure is not launch, and every artefact being built and
+  structurally verified means nothing about whether it runs. The checks, still
+  needing a human at a machine:
     1. Install each artefact on a clean machine and launch it **from the
        applications menu** -- the launcher entry is the thing under test, so
        starting it from a terminal proves nothing. Dialog appears, dismiss, set
-       up an account, send and receive, relaunch, dialog stays gone.
-    2. On Windows, confirm the account directory is under `%APPDATA%\eeemail`.
-       Do this one first: it is the bug v0.3.0 exists to fix, it shipped
-       silently through eight phases of green release builds, and nothing in CI
-       can see it. If it is wrong, a `v0.3.1` is cheap and the prerelease flag
-       means nobody is treating this as stable.
+       up an account, **send and receive** -- that last part is what would have
+       caught the ACL bug, and reading the account list would not have.
+    2. Unzip the archive and run it, on both platforms. On Windows via
+       `eeemail.cmd`. Confirm the profile is in `data/` beside the executable
+       and that an installed copy still uses `%APPDATA%\eeemail` and does not
+       see the portable one's mail.
+    3. On Windows, confirm the account directory is under `%APPDATA%\eeemail`
+       for the *installed* copy. This is the bug v0.3.0 existed to fix and it
+       has still never been observed working.
 - **Issue #2** — upstream drops recipients whose key is missing from the
   envelope while leaving them in the header. eeemail records who, and does not
   change the behaviour.
@@ -398,10 +534,13 @@ encryption was on. Fixed.
 
 ## Suggested next steps, in order
 
-0. **Install v0.3.0 and launch it from a menu**, on Linux and on Windows. The
-   cargo suite and the three live passes have now been run on the released tree
-   (above); this is the only part of the pre-tag checklist still outstanding,
-   and it went out untested. See "Known gaps".
+0. **Install v0.3.1 and launch it from a menu**, on Linux and on Windows, and
+   unzip the archive and run it. Doing this to v0.3.0 is what found the empty
+   ACL; the fix has been unit-tested and its compiled artefact checked, but no
+   installed v0.3.1 has been launched by a human yet, and that is precisely the
+   gap that produced this release. Also confirm the portable profile lands in
+   `data/` beside the executable and that an installed copy still uses
+   `%APPDATA%\eeemail`.
 1. Merge from upstream. The fork is still at `v2.59.0`; the longer that waits,
    the worse the first merge is — and ADR 0021 diverges from upstream on
    something upstream changed deliberately, so read that ledger note first.

@@ -103,3 +103,19 @@ artefact is published. An untested `.dmg` is worse than an absent one.
 - **`deltachat-rpc-server` stops looking load-bearing.** It was next to the app
   in every archive, which reads as a dependency. It is not one, and the release
   notes and install guide now say what it is actually for.
+
+## Amendment — 2026-09-04
+
+**What the archive contains has changed. Everything else here stands.**
+
+This ADR decided that the archive "stays and becomes the tools", holding
+`eeemail-cli` and `deltachat-rpc-server` and not the app. That left no way to
+run eeemail without installing it — which became the obstacle when v0.3.0 was
+found to be unusable and reproducing it required an installation.
+
+The archive now holds all three binaries, is a `.zip` on both platforms, and
+runs unzipped with its profile beside the executable. The installer remains the
+recommended channel and every reason given above for preferring it is unchanged;
+the archive is a second channel, not a replacement.
+
+See [0024](0024-portable-archives.md).

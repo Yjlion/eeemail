@@ -32,12 +32,10 @@ jobs:
           - name: linux-amd64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            archive: tar.gz
             bundles: deb,appimage
           - name: windows-amd64
             os: windows-latest
             target: x86_64-pc-windows-msvc
-            archive: zip
             bundles: nsis
     steps:
       - uses: actions/checkout@v7
@@ -111,6 +109,23 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: 1
         run: npm run tauri build -- --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
+      # v0.3.0 shipped an app whose ACL compiled to `{}`, so `listen()` was
+      # refused and the frontend never received an engine event.
+      # `test_the_frontend_is_allowed_to_hear_the_engine` in
+      # `desktop/src-tauri/src/main.rs` is the real guard and it runs in CI;
+      # this repeats the check here because the
+      # release workflow runs no tests at all, and because the generated file is
+      # what the shipped binary embeds.
+      - name: The event stream is granted
+        shell: bash
+        run: |
+          acl=desktop/src-tauri/gen/schemas/capabilities.json
+          if ! grep -q "core:event" "$acl"; then
+            echo "the Tauri ACL grants no event permission; this build is unusable" >&2
+            cat "$acl" >&2
+            exit 1
+          fi
+
       - name: Stage artifacts
         shell: bash
         run: |
@@ -121,27 +136,78 @@ jobs:
           suffix=""
           if [ "${{ runner.os }}" = "Windows" ]; then suffix=".exe"; fi
 
-          # The tarball is now the *tools*: the desktop app ships as an
-          # installer. `eeemail-cli` inspects a mailbox and cannot send or
-          # receive; `deltachat-rpc-server` is for automation and the test
-          # passes, and the desktop app does not use it -- it embeds the engine
-          # in-process. See docs/INSTALL.md.
-          for tool in eeemail-cli deltachat-rpc-server; do
-            cp "$bin/$tool$suffix" "dist/$out/"
+          # All three binaries, the app first. Through v0.3.0 this archive held
+          # only the two tools, and the app shipped as an installer alone --
+          # which meant there was no way to run eeemail without installing it,
+          # and so no way to try it, or to reproduce a bug in it, on a machine
+          # you would rather not install onto. See
+          # docs/adr/0024-portable-archives.md.
+          #
+          # `tauri build` renames cargo's `eeemail-desktop` to `mainBinaryName`
+          # after compiling, so `eeemail$suffix` is already sitting beside the
+          # tools and nothing extra has to be built for this.
+          for program in eeemail eeemail-cli deltachat-rpc-server; do
+            cp "$bin/$program$suffix" "dist/$out/"
           done
-          cp LICENSE NOTICE README.md docs/INSTALL.md "dist/$out/"
+          cp LICENSE NOTICE README.md docs/INSTALL.md docs/PORTABLE.md "dist/$out/"
+
+          # The marker that moves the profile into this folder. It ships here
+          # and nowhere else, so the same executable is portable when it was
+          # unzipped and ordinary when it was installed, and the two cannot
+          # meet on one machine.
+          touch "dist/$out/eeemail-portable"
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp scripts/eeemail.cmd "dist/$out/"
+
+            # The one thing a Windows portable build cannot do without:
+            # eeemail is a WebView2 app and only the NSIS installer bootstraps
+            # the runtime. `eeemail.cmd` installs this if the runtime is
+            # missing, then launches the app.
+            #
+            # This is the second unpinned third-party download on the Windows
+            # leg -- docs/handoff.md records the v0.3.0 tag build failing on
+            # the first (`nsis-3.zip: Connection Failed`) and calls it a coin
+            # flip. The Evergreen bootstrapper is versionless by design and so
+            # cannot be hash-pinned; retrying, and failing with the URL in the
+            # message, is the whole of the mitigation available.
+            url="https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+            webview2="dist/$out/MicrosoftEdgeWebview2Setup.exe"
+            for attempt in 1 2 3; do
+              if curl -fsSL --retry 3 --retry-delay 5 -o "$webview2" "$url"; then
+                break
+              fi
+              echo "attempt $attempt of 3 failed: $url" >&2
+              if [ "$attempt" = 3 ]; then
+                echo "cannot fetch the WebView2 bootstrapper from $url" >&2
+                exit 1
+              fi
+              sleep 15
+            done
+            # fwlink can answer 200 with an error page, which curl will not
+            # notice. The bootstrapper is around 1.5 MB and starts with `MZ`.
+            if [ "$(wc -c < "$webview2")" -lt 100000 ] || [ "$(head -c 2 "$webview2")" != "MZ" ]; then
+              echo "what came back from $url is not a Windows executable" >&2
+              exit 1
+            fi
+          fi
+
           ( cd dist
-            if [ "${{ matrix.archive }}" = "zip" ]; then
+            if [ "${{ runner.os }}" = "Windows" ]; then
               7z a "$out.zip" "$out"
             else
-              tar czf "$out.tar.gz" "$out"
+              # `zip`, not `7z`: ubuntu-latest ships the former, not the latter.
+              zip -qr "$out.zip" "$out"
             fi )
 
           # Installers, flattened out of Tauri's per-format directories so the
-          # release page lists files rather than paths.
+          # release page lists files rather than paths. The WebView2
+          # bootstrapper the NSIS bundler embeds lands under `bundle/` too, and
+          # is Microsoft's to publish rather than ours.
           bundle="$bin/bundle"
           find "$bundle" -type f \
             \( -name '*.deb' -o -name '*.AppImage' -o -name '*.exe' -o -name '*.msi' \) \
+            -not -name 'MicrosoftEdgeWebview2Setup.exe' \
             -exec cp {} dist/ \;
           ls -la dist
 
@@ -151,7 +217,7 @@ jobs:
         shell: bash
         working-directory: dist
         run: |
-          for f in *.tar.gz *.zip *.deb *.AppImage *.exe *.msi; do
+          for f in *.zip *.deb *.AppImage *.exe *.msi; do
             [ -e "$f" ] || continue
             if command -v sha256sum >/dev/null; then
               sha256sum "$f" > "$f.sha256"
@@ -164,7 +230,6 @@ jobs:
         with:
           name: eeemail-${{ matrix.name }}
           path: |
-            dist/*.tar.gz
             dist/*.zip
             dist/*.deb
             dist/*.AppImage

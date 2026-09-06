@@ -172,6 +172,60 @@ jobs:
         working-directory: core
         run: cargo check --workspace --all-targets
 
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          show-progress: false
+          persist-credentials: false
+      # eeemail links SQLCipher and OpenSSL through vendored crates, which is
+      # what needs an assembler here.
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+      - run: rustup toolchain install $RUST_VERSION --profile minimal
+        shell: bash
+      - run: rustup override set $RUST_VERSION
+        shell: bash
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          key: windows
+      # `tauri::generate_context!` reads `frontendDist` at compile time.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Build the frontend
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run build
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      # The release matrix has built Windows since Phase 7 and has never *run*
+      # anything on it, which is the structural reason `accounts_dir()` could be
+      # wrong for eight releases and the desktop ACL could be empty for one.
+      #
+      # eeemail's own crates only, not `--workspace`: upstream's Windows
+      # portability is upstream's, and pulling `fuzz` and `deltachat-ffi` onto a
+      # Windows runner buys nothing here and can fail for reasons that have
+      # nothing to do with this fork. `deltachat` is still compiled, as their
+      # dependency.
+      - name: cargo check
+        working-directory: core
+        run: cargo check -p eeemail-desktop -p eeemail-cli --all-targets --locked
+      # `data_dir()` is the function that was wrong on Windows, and
+      # `test_the_frontend_is_allowed_to_hear_the_engine` is the ACL that made
+      # v0.3.0 unusable. Both run here, on the platform that was never tested.
+      - name: cargo nextest (desktop shell)
+        working-directory: core
+        run: cargo nextest run -p eeemail-desktop --locked
+
   test:
     name: Test
     runs-on: ubuntu-latest

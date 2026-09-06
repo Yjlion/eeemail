@@ -78,6 +78,43 @@ cd desktop && npm run tauri build -- --bundles deb,appimage
 Add `--debug` to bundle the dev-profile binary, which is how to check the
 packaging path without waiting for an LTO release build.
 
+**A portable copy**, which is what the release `.zip` is. `tauri build` writes
+the app beside the two tools; the empty `eeemail-portable` marker next to the
+executable is the whole of what makes it portable, so this is enough to try the
+rule out:
+
+```sh
+cd desktop && npm run tauri build -- --debug --bundles deb
+mkdir -p /tmp/portable-check
+cp ../core/target/debug/eeemail /tmp/portable-check/
+touch /tmp/portable-check/eeemail-portable
+/tmp/portable-check/eeemail
+# the profile appears in /tmp/portable-check/data/, and nothing is written to
+# ~/.local/share/eeemail
+```
+
+See [ADR 0024](adr/0024-portable-archives.md) and
+[`PORTABLE.md`](PORTABLE.md).
+
+**Run the shell after touching it.** Nothing automated exercises the real Tauri
+IPC path: `screenshots.sh` photographs the browser demo build above, which never
+calls `invoke`, and `e2e-pass.py` drives `deltachat-rpc-server`, which the app
+does not use. v0.3.0 shipped an app with no `capabilities/` directory, so
+Tauri's ACL compiled to `{}`, `listen()` was refused, and every check in this
+repository was green. `desktop/src-tauri/capabilities/` is source and must be
+committed; `desktop/src-tauri/gen/` is generated and is not. Commands registered
+in `generate_handler!` need no ACL entry, but anything from a Tauri plugin --
+the core `event` plugin included -- does.
+
+`test_the_frontend_is_allowed_to_hear_the_engine` guards it by asking the
+compiled `RuntimeAuthority` the same question the running app asks. If it fails
+while the capability file looks correct, it is the build cache: `tauri-build`
+re-reads `capabilities/` on cargo's mtime fingerprint, so restoring a file with
+its old timestamp leaves the previous ACL compiled into that feature set's
+`OUT_DIR`. `touch desktop/src-tauri/capabilities/*.json
+desktop/src-tauri/build.rs` and rebuild. CI always builds cold and never sees
+it.
+
 `@tauri-apps/api` and `@tauri-apps/cli` are pinned to **exact** versions in
 `package.json`, not caret ranges. `tauri build` refuses to run when the
 `tauri` crate and `@tauri-apps/api` differ in major/minor, and a caret range is

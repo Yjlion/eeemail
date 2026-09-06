@@ -1,100 +1,113 @@
-# eeemail v0.3.0 — something you install
+# eeemail v0.3.1 — the one that runs
 
 An end-to-end-encrypted email client with classic email functionality, built on
 a fork of [`chatmail/core`](https://github.com/chatmail/core).
 
-**v0.2.0 was a folder of executables.** It worked — it had been run end to end
-against a real mail server — but using it meant extracting an archive and
-remembering a path, and the application never said a word about what it was.
-This release is the one you install: a `.deb`, an `.AppImage` or a Windows
-installer, in your applications menu, that tells you on first launch what it is
-and is not.
+**v0.3.0 did not work.** It installed correctly on every platform and then
+failed the moment it opened a window, with `Command plugin:event|listen not
+allowed by ACL` where the mailbox should have been. This release fixes that, and
+changes how the project is distributed so that the next one like it is found
+before a tag rather than after.
+
+## What is fixed
+
+**The desktop app has an ACL again, so it can hear the engine.** Tauri 2
+resolves its permissions by globbing `src-tauri/capabilities/` at build time.
+That directory did not exist, so the ACL compiled to `{}`. The four commands the
+shell registers itself are not ACL-checked and still worked — but `listen()` is
+the *core event plugin*, and it is. The frontend attaches the `rpc-message`
+stream in its constructor and awaits it before every call, so nothing ever
+resolved: no mail, no accounts, no events, on Linux and Windows alike.
+
+**Why nothing caught it, which is the more useful half.** Nothing automated in
+this repository exercises the real Tauri IPC path. `scripts/screenshots.sh`
+photographs a browser-only demo build that answers from fixtures and never calls
+`invoke`. `scripts/e2e-pass.py` drives `deltachat-rpc-server`, which the app does
+not use — the shell embeds the engine in-process. Every CI job ran on
+`ubuntu-latest`, and the Windows leg of the release workflow compiled and
+packaged without executing anything. 1375 tests, three live passes and eleven
+byte-stable screenshots were all green against an application that could not
+open a mailbox.
+
+Three guards were added rather than one fix:
+
+- CI and the release workflow now assert that the **generated**
+  `gen/schemas/capabilities.json` grants an event permission. That the source
+  file exists proves nothing about what got compiled in, and it was the compiled
+  artefact that was empty.
+- **A Windows CI job.** The release matrix has built Windows since Phase 7 and
+  has never run anything on it. That is the structural reason `accounts_dir()`
+  could be wrong for eight releases and the ACL could be empty for one.
+- **The desktop shell has unit tests**, its first. `data_dir()` was the function
+  that broke Windows in v0.3.0 and it had no test at all, because it was written
+  with `#[cfg]` and so could only ever be checked on the platform it was wrong
+  about. The platform is now a parameter, and the Windows rule is tested from
+  Linux.
+
+**A failed launch on Windows now says why.** A release build is
+`windows_subsystem = "windows"` and so has no console: the error returned from
+`main` and every `eprintln!` went to a stderr that did not exist. That is how the
+original `accounts_dir()` bug survived eight releases — the app simply did not
+appear, and there was nothing to report. It now shows a message box carrying the
+error chain.
 
 ## What is new
 
-**It installs, and it launches like an app.** `.deb` and `.AppImage` on Linux,
-an NSIS installer on Windows, built by `tauri build` rather than `cargo build`.
-The `.deb` and the Windows installer register a desktop entry and an icon. See
-[ADR 0022](../docs/adr/0022-desktop-distribution.md).
+**A zip you unzip and run.** `eeemail-windows-amd64.zip` and
+`eeemail-linux-amd64.zip` now hold the app and both command-line tools, and run
+from wherever you unpack them. v0.3.0's archives held only the tools, which
+meant there was no way to run eeemail without installing it — and so no way to
+try it, or to reproduce a bug in it, on a machine you would rather not install
+onto. Reproducing the bug above required an installation, which is what forced
+this. The Linux `.tar.gz` becomes a `.zip` so both platforms ship the same kind
+of file. See [ADR 0024](../docs/adr/0024-portable-archives.md).
 
-**It says what it is, before it asks for your password.** A dialog on first
-launch: this is unaudited development software; a dedicated account is
-recommended and here is why; it still interoperates with ordinary mail clients;
-back up the local database because there is no other copy. A `PREVIEW` marker
-stays in the sidebar afterwards, because the dialog is read once and the state
-it describes lasts longer than that. See
-[ADR 0023](../docs/adr/0023-first-launch-disclosure.md).
+**A portable copy keeps its mail beside the executable.** An empty
+`eeemail-portable` file ships inside the archive and nowhere else; when the app
+finds it next to itself, the whole profile — accounts, staged attachments, the
+first-launch marker — goes in `data/` in that folder rather than in
+`%APPDATA%\eeemail` or `~/.local/share/eeemail`. One executable, and what makes
+it portable is where it was unpacked. Unzip it, try it, delete the folder:
+nothing is left behind, and it cannot collide with an installed copy.
 
-**Windows worked for the first time.** `accounts_dir()` read `XDG_DATA_HOME` and
-then `HOME` and gave up if it found neither, which is the ordinary state of a
-Windows session — so the Windows binary the release matrix had been building
-since Phase 7 exited on launch. No test could have caught it: there is no Windows
-runner in CI, and the function reads the environment rather than anything a unit
-test constructs.
+**The Windows archive carries the WebView2 runtime.** eeemail draws its window
+with WebView2, and only the installer bootstrapped it — so an unzipped copy on a
+fresh VM, an LTSC or N edition, or a machine that has never run Edge would start
+and vanish with no message. `eeemail.cmd` checks for the runtime, installs it
+from the bundled bootstrapper if it is absent, and launches the app. The NSIS
+bundle now embeds the bootstrapper too, rather than downloading it at install
+time.
 
-**`Holding` is now `Unverified`,** everywhere: the label, the sidebar, the RPC
-wire, the stored row. "Holding" described what the mailbox was doing;
-"Unverified" describes what is true about the sender, which is the thing you have
-to decide about. Migration 171 renames the label in place, so no message loses
-its tag.
+**The installers are unchanged and remain the recommended way in.** ADR 0022's
+reasoning holds: a `.deb` or an NSIS installer registers a desktop entry and an
+icon, and nobody should have to remember a path to read their mail. The archive
+is a second channel, not a replacement.
 
-**One thing destroys mail on a timer, and it is Trash.** Unverified mail that
-was never accepted used to be destroyed outright at 30 days, while the deadline
-a few lines away in the same housekeeping pass had already grown a recoverable
-window on the argument that a timer must not destroy the only copy of a mailbox.
-That argument does not stop applying because the mail came from a stranger. So:
+## Known gaps
 
-| Route in | What happens |
-|---|---|
-| Unverified, never accepted | Moves to **Trash** after 30 days *(never / 7 / 30 / 90)* |
-| A disappearing-message timer fires | Moves to **Trash**, unchanged since v0.2.0 |
-| You throw it away | Moves to **Trash** |
-| Anything in Trash | **Destroyed** after 30 days *(immediately / 7 / 30 / 90)* |
-
-Both windows are now settings rather than one constant and one setting, and the
-unverified window is measured from when the message was held and read afresh on
-every sweep — so shortening it moves mail that is already waiting. The reading
-pane says which of the three reasons put a message in Trash.
-
-**Full install and run instructions.** [`docs/INSTALL.md`](../docs/INSTALL.md):
-verifying the download, first launch, the dedicated-account recommendation and
-how to share an account anyway, interoperability with everyone else's client,
-where your mail is stored, the deadlines, uninstalling, and what the two
-command-line tools are for.
-
-## Things to know before trusting it
-
-- **Nothing here is signed.** SmartScreen will warn on Windows and Linux desktops
-  that check signatures will say so. The `.sha256` beside each file proves the
-  download arrived intact; it does not prove it came from us.
-- **Keys learned from an `Autocrypt:` header are not authenticated.** Anyone who
-  can write the `From` line of a first message can write the `Autocrypt` line.
-  That protects you from someone reading stored mail; it does **not** protect you
-  from someone rewriting mail in flight. That is Autocrypt's own threat model,
-  and it is why "encrypted" and "verified" are two separate badges in the UI —
-  only a QR verification survives an active attacker. See
-  [ADR 0021](../docs/adr/0021-autocrypt-key-contacts.md).
-- **Interop is proven against Delta Chat's engine and GnuPG, and nothing else.**
-  `scripts/interop-pass.py` runs eeemail against upstream's released
-  `deltachat-rpc-server` — the same binary Delta Chat Desktop ships — and
-  `scripts/gpg-interop-pass.py` has GnuPG decrypt our PGP/MIME and verify our
-  signatures. **Thunderbird, Gmail and every mainstream provider remain
-  untested.** That is the largest gap in the project.
-- **A stock Delta Chat will not accept your first message.** It ships with
-  `force_encryption` on, which refuses to send *or download* cleartext, so the
-  first message — which has no key to use yet — is dropped before its `Autocrypt`
-  header can be read. The other end has to turn that off once.
-- **Blob encryption is opt-in and needs a database passphrase.** Until you set
-  one, attachments and retained message sources stay in cleartext in the blobdir.
-  The app reports what is and is not protected rather than claiming otherwise.
+- **Nothing automated still exercises the real desktop IPC path.** The guards
+  above catch the specific shape of this bug — an empty ACL — and not the next
+  one. Running the shell by hand after touching it is the only check there is,
+  and `CLAUDE.md` and `docs/development.md` now say so.
+- **Interop with Thunderbird, Gmail or any mainstream provider is untested.**
+  Delta Chat's own engine and GnuPG are covered by `scripts/interop-pass.py` and
+  `scripts/gpg-interop-pass.py`; everything else is not, and is not reachable
+  from this environment.
+- **The Linux archive is portable but not self-contained.** The `eeemail` binary
+  links the system webview and needs `libwebkit2gtk-4.1`, `libsoup-3.0` and GTK
+  3 installed. The `.AppImage` carries them and is the build that needs nothing.
+- **The Windows release leg now has a second unpinned third-party download.**
+  The v0.3.0 tag build failed once on the first (`nsis-3.zip: Connection
+  Failed`). The Evergreen WebView2 bootstrapper is versionless by design and so
+  cannot be hash-pinned; the fetch retries three times and checks that what came
+  back is a Windows executable rather than an error page.
+- **`%APPDATA%` is the roaming profile,** and a SQLite mailbox does not belong
+  there on a domain-joined machine. Moving it to `%LOCALAPPDATA%` is the right
+  change and needs a migration, so it is not in a fix release.
 - **Encrypted mail can silently omit a recipient** whose key is missing —
-  upstream behaviour we surface rather than change. eeemail records who never
-  received it.
-- **macOS is not built.** The path handling is there; nothing has been compiled
-  or tested on it, and an untested `.dmg` is worse than an absent one.
-- **Camera QR scanning is not wired up.** Paste and file are the working paths.
-- **One attachment per message**, because core carries one file per message. The
-  composer says so rather than hiding it.
+  upstream behaviour we surface rather than change.
+- **macOS is not built.** **Camera QR scanning is not wired up.** **One
+  attachment per message.**
 - Most of this was written by a large language model under human direction. It is
   reviewed and tested; it has **not** been audited by a security professional,
   and an encrypted mail client is exactly the kind of software where that
@@ -103,64 +116,56 @@ command-line tools are for.
 ## Verification
 
 ```
-cargo nextest run --workspace              1365 passed, 0 failed, 1 skipped
-  ... --all-features                       1375 passed, 0 failed, 1 skipped
-cargo test --workspace --locked --doc      0 failed
-cargo clippy --workspace --all-targets     clean, default and --all-features
-cargo fmt --all -- --check                 clean
-scripts/check-fork-patches.sh              clean
-desktop: npm run check, npm run build      clean
-scripts/screenshots.sh                     11 images, byte-stable across runs
-server/compose/smoke-test.py               all checks pass
-python3 scripts/e2e-pass.py                all six steps pass, live
-python3 scripts/interop-pass.py            all steps pass, against upstream v2.59.0
-python3 scripts/gpg-interop-pass.py        all steps pass, against GnuPG 2.4.9
+cargo nextest run --workspace --locked              1376 passed, 0 failed, 1 skipped
+  ... --all-features                                1386 passed, 0 failed, 1 skipped
+cargo test --workspace --locked --doc               0 failed
+cargo clippy --workspace --all-targets              clean, default and --all-features
+cargo fmt --all -- --check                          clean
+scripts/check-fork-patches.sh                       clean
+desktop: npm run check, npm run build               clean
+scripts/screenshots.sh                              11 images, byte-stable across runs
 ```
 
-Clippy runs with `-Dwarnings`, in both feature configurations, because
-`--all-features` alone never lints the default build — which is the one we ship.
-The tests run in both configurations for the same reason, and `--all-features`
-carries ten tests the default build does not.
+Eleven more tests than v0.3.0 in each configuration (1365 and 1375), and all
+eleven are the desktop shell's, which had none. Clippy runs with `-Dwarnings` in
+both configurations, because `--all-features` alone never lints the default
+build — which is the one we ship.
 
-One flake was seen on a CI runner and not reproduced locally:
-`context_tests::test_cache_is_cleared_when_io_is_started` failed once on
-`Logged an unexpected warning: no such table: chats`. It is a race in an
-upstream test rather than anything here — the location loop's first tick warns
-against the empty database of a pseudo-configured account, and the test forbids
-unexpected warnings, so whether it finishes first is timing. Neither
-`location.rs` nor that test is touched by this release, and the job passed on
-re-run.
+**The ACL bug was reproduced before it was fixed, and by the test that now
+guards it.** `test_the_frontend_is_allowed_to_hear_the_engine` builds the real
+`generate_context!()` and asks the compiled `RuntimeAuthority` whether
+`plugin:event|listen` resolves for the `main` window — the same authority the
+running app consults, not a re-reading of the source file. With
+`capabilities/` moved aside it fails with `plugin:event|listen is refused for
+the `main` window`; with it in place it passes. That is the diagnosis confirmed
+rather than assumed.
 
-The live passes cover the rename and the new default across the wire, not only
-in Rust: `e2e-pass.py` step 1 asserts `get_unverified_trash_days` is 30, and
-steps 3 and 5 of the interop pass drive the `Unverified` tag through JSON-RPC
-against a stock Delta Chat engine.
+**The portable rule was checked on the real binary.** Copied into a scratch
+folder beside an `eeemail-portable` marker and launched, it put its profile in
+`<folder>/data/accounts/` and wrote nothing to `~/.local/share/eeemail`.
 
-The `.deb` was built and unpacked to check it: `usr/bin/eeemail`, a
-`usr/share/applications/eeemail.desktop` with `Exec=eeemail`, and icons at three
-sizes. The `.AppImage` could not be built where this was prepared —
-`linuxdeploy-plugin-gtk` hardcodes a gdk-pixbuf path that modern distributions
-no longer use — so CI is the first place it has ever existed.
+**The three live passes were not re-run.** `e2e-pass.py`, `interop-pass.py` and
+`gpg-interop-pass.py` exercise the engine, and the engine did not change: the
+entire diff to `core/` in this release is two version numbers in `Cargo.lock`.
+They passed on v0.3.0 and CI runs the suite that covers the same code.
 
-**A `workflow_dispatch` rehearsal built every artefact on both platforms**, and
-each was downloaded and opened rather than taken on trust: all six checksums
-verify; the `.deb` carries `usr/bin/eeemail`, a desktop entry with
-`Exec=eeemail`, icons at three sizes and `Depends: libwebkit2gtk-4.1-0,
-libgtk-3-0`; the `.AppImage` extracts to an `AppRun`, a desktop entry, an icon
-and a valid ELF; the NSIS installer built; and the archives hold the two
-command-line tools and nothing else.
+**What was not verified, and it is the same gap that shipped v0.3.0 broken.**
+Nothing automated exercises the real Tauri IPC path, and the environment this
+was prepared in could not either — WebKitGTK's web process does not start under
+`xvfb`, so the webview never executed any JavaScript. The app starts, opens its
+accounts directory and stays running; **what it draws was not observed.** Nobody
+has seen v0.3.1 render a mailbox.
 
-**Two things no test suite covers, because neither can be reached from CI.**
-Both must be done before the tag:
+**Two things no test suite covers.** v0.3.0 went out with the same two
+outstanding and that is exactly how it shipped broken:
 
-1. **Install each artefact on a clean machine** and launch **from the
-   applications menu** — a launcher entry is the thing being tested, so starting
-   it from a terminal proves nothing. Confirm the first-launch dialog appears,
-   dismiss it, set up an account, send and receive, relaunch, and confirm the
-   dialog does not come back.
-2. **On Windows, confirm the account directory is under `%APPDATA%\eeemail`.**
-   This is the path that could not work before v0.3.0, and there is no Windows
-   runner in CI to check it.
+1. **Install each artefact and launch it from the applications menu**, on Linux
+   and on Windows. Dialog appears, dismiss it, set up an account, send and
+   receive, relaunch, dialog stays gone.
+2. **Unzip the archive on Windows and run `eeemail.cmd`.** Window appears with
+   no ACL banner; the profile is in `data\` inside the unzipped folder; an
+   installed copy on the same machine still uses `%APPDATA%\eeemail` and does
+   not see the portable one's mail.
 
 ## Installing
 
@@ -168,12 +173,13 @@ Download the installer for your platform, verify the `.sha256` beside it, and
 run it. Full instructions in [`docs/INSTALL.md`](../docs/INSTALL.md).
 
 ```sh
-sha256sum -c eeemail_0.3.0_amd64.deb.sha256
-sudo apt install ./eeemail_0.3.0_amd64.deb
+sha256sum -c eeemail_0.3.1_amd64.deb.sha256
+sudo apt install ./eeemail_0.3.1_amd64.deb
 ```
 
-The `eeemail-*.tar.gz` and `.zip` archives hold the two command-line tools,
-`eeemail-cli` and `deltachat-rpc-server`. Neither is needed to use eeemail and
-the app uses neither — it embeds the engine in-process.
+Or unzip `eeemail-windows-amd64.zip` / `eeemail-linux-amd64.zip` and run the app
+from where it lands — on Windows, `eeemail.cmd` the first time.
+[`docs/PORTABLE.md`](../docs/PORTABLE.md) is the guide, and it ships inside the
+archive.
 
 Licensed under MPL-2.0.
