@@ -32,20 +32,29 @@ so they regenerate identically and a change in the images is a change in the UI.
 
 ## Install
 
-Grab an installer from the [releases page](https://github.com/Yjlion/eeemail/releases):
-a `.deb` or `.AppImage` on Linux, an installer on Windows. The `.deb` and the
-Windows installer put eeemail in your applications menu.
+Two ways, from the [releases page](https://github.com/Yjlion/eeemail/releases),
+and both are the same application.
+
+**An installer**, which puts eeemail in your applications menu: a `.deb` or an
+`.AppImage` on Linux, an NSIS installer on Windows.
 
 ```sh
-sha256sum -c eeemail_0.3.0_amd64.deb.sha256   # verify first
-sudo apt install ./eeemail_0.3.0_amd64.deb
+sha256sum -c eeemail_0.3.1_amd64.deb.sha256   # verify first
+sudo apt install ./eeemail_0.3.1_amd64.deb
 ```
+
+**A zip you unzip and run**, if you would rather not install anything.
+`eeemail-windows-amd64.zip` and `eeemail-linux-amd64.zip` hold the app and both
+command-line tools, and keep their mail in `data/` inside the unzipped folder —
+so trying eeemail leaves nothing behind. On Windows run `eeemail.cmd` the first
+time; it installs the WebView2 runtime if the machine lacks it. See
+**[`docs/PORTABLE.md`](docs/PORTABLE.md)**.
 
 **[`docs/INSTALL.md`](docs/INSTALL.md)** is the full guide: verifying the
 download, first launch, why a dedicated account is recommended and how to share
 one anyway, where your mail is stored, the retention deadlines, and the two
-command-line tools in the separate archive. Nothing is code-signed, so the
-checksum is the only integrity check there is.
+command-line tools. Nothing is code-signed, so the checksum is the only
+integrity check there is.
 
 macOS is not built yet.
 
@@ -77,10 +86,12 @@ can set. See [ADR 0019](docs/adr/0019-recoverable-ephemeral-expiry.md).
 
 ## Status
 
-**v0.3.0 is the first release you install rather than extract.** The engine is
-complete through Phase 14, the desktop client reads and writes, and the whole
-thing has been run end to end against a real mail server, against Delta Chat's
-own engine, and against GnuPG.
+**v0.3.1 is the first release whose desktop app actually runs.** v0.3.0 shipped
+with an empty Tauri ACL, so the frontend could not attach to the engine's event
+stream and no installed copy worked at all; it is also the first release you can
+unzip and run without installing. The engine is complete through Phase 14, the
+desktop client reads and writes, and the whole thing has been run end to end
+against a real mail server, against Delta Chat's own engine, and against GnuPG.
 `core/` is a fork of
 [`chatmail/core`](https://github.com/chatmail/core) at `v2.59.0`, vendored via
 `git subtree`, with eeemail's own code confined to `core/src/email/`.
@@ -104,7 +115,9 @@ own engine, and against GnuPG.
 | End-to-end pass against a live server | ✅ |
 | Structured email ([SML](https://structured.email/)) | ✅ |
 | Installers with a launcher entry (`.deb`, `.AppImage`, Windows) | ✅ |
+| A zip you unzip and run, with its profile beside the executable | ✅ |
 | First-launch disclosure of what this software is | ✅ |
+| Any automated test of the real desktop IPC path | ❌ |
 | macOS build | ❌ |
 | Code signing | ❌ |
 | Interop with Thunderbird, Gmail or any mainstream provider | ❌ |

@@ -33,8 +33,9 @@ Testing: [`../testing.md`](../testing.md)
 | [0019](0019-recoverable-ephemeral-expiry.md) | Ephemeral expiry moves a message to Trash for 30 days instead of destroying it | Accepted · amended 2026-09-03 (the window governs all of Trash) |
 | [0020](0020-blobdir-encryption.md) | The blobdir is encrypted with the database key, opt-in and off by default | Accepted |
 | [0021](0021-autocrypt-key-contacts.md) | An `Autocrypt:` header makes a key-contact, reversing an upstream `v2.59` decision | Accepted |
-| [0022](0022-desktop-distribution.md) | eeemail ships as a platform installer, not as a folder of executables | Accepted |
+| [0022](0022-desktop-distribution.md) | eeemail ships as a platform installer, not as a folder of executables | Accepted · archive contents amended by [0024](0024-portable-archives.md) |
 | [0023](0023-first-launch-disclosure.md) | The application says what it is, before it asks for a mail password | Accepted |
+| [0024](0024-portable-archives.md) | The release archive holds the app, not only the tools, and runs unzipped | Accepted |
 
 ## Deferred
 

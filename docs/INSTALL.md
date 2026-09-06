@@ -10,15 +10,22 @@ time you launch it.
 ## What you download
 
 The [release page](https://github.com/Yjlion/eeemail/releases) has two kinds of
-file per platform.
+file per platform, and both of them are the app.
 
 | File | What it is |
 |---|---|
-| `eeemail_0.3.0_amd64.deb`, `eeemail_0.3.0_amd64.AppImage` | The app, for Linux |
-| `eeemail_0.3.0_x64-setup.exe` | The app, for Windows |
-| `eeemail-linux-amd64.tar.gz`, `eeemail-windows-amd64.zip` | The command-line tools, which most people do not need |
+| `eeemail_0.3.1_amd64.deb`, `eeemail_0.3.1_amd64.AppImage` | The installer, for Linux |
+| `eeemail_0.3.1_x64-setup.exe` | The installer, for Windows |
+| `eeemail-linux-amd64.zip`, `eeemail-windows-amd64.zip` | The app and both command-line tools, unzip and run |
 
-You want the app. The archive is covered at the bottom.
+**An installer** puts eeemail in your applications menu with an icon, which is
+what makes it something you launch rather than something you remember the path
+to. Use one if eeemail is going to be your mail client.
+
+**The archive** runs from wherever you unzip it and keeps its mail inside that
+folder, so you can try eeemail, or test a release, without installing anything
+and without leaving anything behind. It is the same application.
+[`PORTABLE.md`](PORTABLE.md) is its guide, and it ships inside the archive.
 
 ### Verify what you downloaded
 
@@ -26,14 +33,14 @@ Every file has a `.sha256` beside it. Checking it costs one command and means a
 corrupted or substituted download fails loudly rather than quietly:
 
 ```sh
-sha256sum -c eeemail_0.3.0_amd64.deb.sha256
+sha256sum -c eeemail_0.3.1_amd64.deb.sha256
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-(Get-FileHash .\eeemail_0.3.0_x64-setup.exe -Algorithm SHA256).Hash
-Get-Content .\eeemail_0.3.0_x64-setup.exe.sha256
+(Get-FileHash .\eeemail_0.3.1_x64-setup.exe -Algorithm SHA256).Hash
+Get-Content .\eeemail_0.3.1_x64-setup.exe.sha256
 ```
 
 The two hashes must match. Note what this does and does not do: it proves the
@@ -45,7 +52,7 @@ Windows SmartScreen and any Linux desktop that checks signatures will say so.
 **Debian, Ubuntu and derivatives.**
 
 ```sh
-sudo apt install ./eeemail_0.3.0_amd64.deb
+sudo apt install ./eeemail_0.3.1_amd64.deb
 ```
 
 eeemail then appears in your applications menu. Launch it there, or run
@@ -54,8 +61,8 @@ eeemail then appears in your applications menu. Launch it there, or run
 **Any other Linux — the AppImage.**
 
 ```sh
-chmod +x eeemail_0.3.0_amd64.AppImage
-./eeemail_0.3.0_amd64.AppImage
+chmod +x eeemail_0.3.1_amd64.AppImage
+./eeemail_0.3.1_amd64.AppImage
 ```
 
 An AppImage installs nothing and runs from wherever you put it. It will *not*
@@ -64,10 +71,28 @@ something like [Gear Lever](https://github.com/mijorus/gearlever) or
 `appimaged`. If you want a launcher entry without thinking about it, use the
 `.deb`.
 
-**Windows.** Run `eeemail_0.3.0_x64-setup.exe` and follow the installer.
+**Windows.** Run `eeemail_0.3.1_x64-setup.exe` and follow the installer.
 eeemail then appears in the Start menu. SmartScreen will warn that the publisher
 is unknown, because the installer is unsigned; "More info" → "Run anyway" is the
 way past it, and you should have checked the hash above before deciding to.
+
+The installer carries the **Microsoft Edge WebView2 runtime**, which is what
+eeemail draws its window with, and installs it if the machine does not have it.
+Windows 11 and up-to-date Windows 10 already do; a fresh VM, an LTSC or N
+edition, or a machine that has never run Edge may not. This is the one thing
+that makes an installed copy simpler than an unzipped one — see
+[`PORTABLE.md`](PORTABLE.md) if you are using the archive.
+
+**Windows, without installing.** Unzip `eeemail-windows-amd64.zip` and run
+`eeemail.cmd`. It installs the WebView2 runtime if it is missing and then
+starts the app; after the first run you can start `eeemail.exe` directly. Your
+mail lives in `data\` inside the unzipped folder, not in `%APPDATA%`.
+
+**Linux, without installing.** Unzip `eeemail-linux-amd64.zip` and run
+`./eeemail` — `chmod +x eeemail` first if your unzip tool dropped the bit. Note
+that this binary links the system webview and so needs `libwebkit2gtk-4.1`,
+`libsoup-3.0` and GTK 3 installed. The `.AppImage` carries those with it and is
+the option that needs nothing at all.
 
 **macOS** is not built yet. The code has no Apple-specific parts and the data
 directory is already handled, but nothing has been compiled or tested there, so
@@ -157,6 +182,13 @@ that automated testing here cannot reach. It is the largest gap in the project.
 | Linux | `~/.local/share/eeemail/` (or `$XDG_DATA_HOME/eeemail/`) |
 | Windows | `%APPDATA%\eeemail\` |
 | macOS | `~/Library/Application Support/eeemail/` |
+| Any, unzipped from the archive | `data/` inside the unzipped folder |
+
+An unzipped copy is portable because of the empty `eeemail-portable` file the
+archive ships beside the executable; that file is the whole of the rule. It also
+means a portable copy and an installed copy never share a profile, and that
+**deleting the unzipped folder deletes the mailbox** — see
+[`PORTABLE.md`](PORTABLE.md).
 
 Accounts are in `accounts/` under that. **Back it up.** The local database is
 the mailbox and the server has nothing left to re-download, so losing this
@@ -191,7 +223,7 @@ device is still holding.
 
 ```sh
 sudo apt remove eeemail          # Debian/Ubuntu
-rm eeemail_0.3.0_amd64.AppImage  # AppImage
+rm eeemail_0.3.1_amd64.AppImage  # AppImage
 ```
 
 On Windows, use "Add or remove programs".
@@ -203,8 +235,10 @@ copy.
 
 ## The command-line tools
 
-The archive holds two programs. Neither is needed to use eeemail, and **the app
-does not use them** — it embeds the engine in-process.
+The archive holds two programs besides the app. Neither is needed to use
+eeemail, and **the app does not use them** — it embeds the engine in-process.
+They are in the same archive because one archive is easier to publish and to
+verify than two, not because anything needs them.
 
 **`eeemail-cli`** inspects and configures a mailbox from a shell. It is one-shot:
 every invocation opens the account, does one thing, prints JSON, and exits. It
@@ -233,13 +267,24 @@ use it. Set `DC_ACCOUNTS_PATH` and talk JSON Lines to it.
 
 ## If something goes wrong
 
-Start it from a terminal, where it prints what it is doing:
+**Linux.** Start it from a terminal, where it prints what it is doing:
 
 ```sh
 eeemail                                    # installed .deb
-./eeemail_0.3.0_amd64.AppImage             # AppImage
+./eeemail_0.3.1_amd64.AppImage             # AppImage
+./eeemail                                  # unzipped from the archive
 RUST_LOG=info eeemail                      # with engine logging
 ```
+
+`error while loading shared libraries` means a missing webview package; see the
+Linux notes above, or use the `.AppImage`.
+
+**Windows.** A release build has no console, so there is nothing to read from a
+terminal. If eeemail cannot start it now says why in a message box — that text
+is the thing to report. If no window and no message box appear at all, the
+WebView2 runtime is the usual cause: run `eeemail.cmd` from the archive, or
+install the runtime from
+[Microsoft](https://developer.microsoft.com/microsoft-edge/webview2/).
 
 Then open an [issue](https://github.com/Yjlion/eeemail/issues) with what it
 printed. Please do not paste your mail.
