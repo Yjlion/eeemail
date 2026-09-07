@@ -2916,6 +2916,22 @@ impl CommandApi {
             .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
     }
 
+    /// The original MIME bytes of a message, or `null` once retention has
+    /// elapsed.
+    ///
+    /// The byte-exact counterpart of `get_message_raw_mime`, which replaces
+    /// invalid sequences because a JSON string has to be valid UTF-8. That is
+    /// the right trade for showing source on screen and the wrong one for
+    /// writing a `.eml` the user expects to be what arrived.
+    async fn get_message_raw_mime_bytes(
+        &self,
+        account_id: u32,
+        msg_id: u32,
+    ) -> Result<Option<Vec<u8>>> {
+        let ctx = self.get_context(account_id).await?;
+        email::rawmime::load(&ctx, MsgId::new(msg_id)).await
+    }
+
     /// Whether the original bytes of a message are still retained.
     ///
     /// Cheaper than fetching them, and what a UI needs to decide whether to
@@ -3374,6 +3390,29 @@ impl CommandApi {
         email::ephemeral::restore(&ctx, &msgs).await
     }
 
+    /// Destroys everything in the trash now, and returns how many went.
+    ///
+    /// Irreversible, and the only place a client can skip the recoverable
+    /// window wholesale, so put it behind a confirmation that says the count.
+    async fn empty_trash(&self, account_id: u32) -> Result<u32> {
+        let ctx = self.get_context(account_id).await?;
+        let destroyed = email::ephemeral::empty(&ctx).await?;
+        Ok(u32::try_from(destroyed).unwrap_or(u32::MAX))
+    }
+
+    /// Destroys the given trashed messages now, and returns how many went.
+    ///
+    /// Ids that are not in the trash are **skipped, not destroyed**: the trash
+    /// is the only place in eeemail that destroys mail, and this must not
+    /// become a delete for any message id a client can name. A caller that
+    /// passed something untrashed sees a smaller count rather than silence.
+    async fn delete_trashed_messages(&self, account_id: u32, msg_ids: Vec<u32>) -> Result<u32> {
+        let ctx = self.get_context(account_id).await?;
+        let msgs: Vec<MsgId> = msg_ids.into_iter().map(MsgId::new).collect();
+        let destroyed = email::ephemeral::destroy_now(&ctx, &msgs).await?;
+        Ok(u32::try_from(destroyed).unwrap_or(u32::MAX))
+    }
+
     /// What the trash knows about a message, or `null` if it is not in it.
     ///
     /// `reason` is what lets a UI say "this expired" rather than "you deleted
@@ -3476,6 +3515,15 @@ impl CommandApi {
                 Err(_) => String::new(),
             };
             let text = msg.get_text();
+            let outgoing = msg.get_state().is_outgoing();
+            // Only for outgoing rows. An inbox of a few hundred messages must
+            // not pay a recipient-set lookup per row for a field that renders
+            // nowhere.
+            let to = if outgoing {
+                email::recipients::to_display(&ctx, msg_id).await?
+            } else {
+                String::new()
+            };
             rows.push(JsonrpcMessageRow {
                 msg_id: msg_id.to_u32(),
                 subject: msg.get_subject().to_string(),
@@ -3484,6 +3532,8 @@ impl CommandApi {
                 // of every message over the pipe to render 90 characters.
                 preview: text.chars().take(140).collect(),
                 from,
+                outgoing,
+                to,
                 timestamp: msg.get_timestamp(),
                 unread: msg.get_state() == MessageState::InFresh,
                 encrypted: crypto.encrypted,
@@ -3503,6 +3553,11 @@ impl CommandApi {
     ///
     /// `attachment` is a filesystem path, and there is one, because core
     /// carries one file per message.
+    ///
+    /// `text` is the plain-text body and is never optional. `html`, when given,
+    /// is sent as a `text/html` alternative *beside* it, not instead of it, so
+    /// a correspondent whose client shows plain text reads the message rather
+    /// than a blank body. See `docs/adr/0025-composed-html.md`.
     async fn send_email(
         &self,
         account_id: u32,
@@ -3510,12 +3565,19 @@ impl CommandApi {
         subject: String,
         text: String,
         attachment: Option<String>,
+        html: Option<String>,
     ) -> Result<u32> {
         let ctx = self.get_context(account_id).await?;
         let path = attachment.map(std::path::PathBuf::from);
-        let msg_id =
-            email::compose::send(&ctx, &recipients.into(), &subject, &text, path.as_deref())
-                .await?;
+        let msg_id = email::compose::send(
+            &ctx,
+            &recipients.into(),
+            &subject,
+            &text,
+            path.as_deref(),
+            html.as_deref(),
+        )
+        .await?;
         Ok(msg_id.to_u32())
     }
 

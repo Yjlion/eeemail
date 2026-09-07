@@ -29,6 +29,8 @@
 use anyhow::Result;
 use mailparse::{MailHeader, SingleInfo};
 
+use crate::chat::{ChatId, get_chat_contacts};
+use crate::contact::{Contact, ContactId};
 use crate::context::Context;
 use crate::message::MsgId;
 
@@ -207,6 +209,50 @@ pub async fn load_kind(
         .into_iter()
         .filter(|r| r.kind == kind)
         .collect())
+}
+
+/// The `To:` recipients of a message as one display line.
+///
+/// Display name where we hold one, address otherwise, joined in header order.
+/// Formatted here rather than in each client for the same reason
+/// `JsonrpcMessageRow::from` is: a Sent list should read the same whichever
+/// client is showing it.
+///
+/// Falls back to the message's chat members, minus self, when there is no
+/// `msg_recipients` row at all. That is not hypothetical -- mail sent before
+/// the recipient set existed, and anything in an imported Delta Chat profile,
+/// has none -- and a Sent list that renders those rows blank is the same defect
+/// as one that renders the sender's own name.
+///
+/// Empty when neither source knows anything, which a client should show as
+/// nothing rather than inventing an addressee.
+pub async fn to_display(context: &Context, msg_id: MsgId) -> Result<String> {
+    let to = load_kind(context, msg_id, RecipientKind::To).await?;
+    if !to.is_empty() {
+        return Ok(to
+            .into_iter()
+            .map(|r| if r.name.is_empty() { r.addr } else { r.name })
+            .collect::<Vec<_>>()
+            .join(", "));
+    }
+
+    let chat_id: Option<ChatId> = context
+        .sql
+        .query_get_value("SELECT chat_id FROM msgs WHERE id=?", (msg_id,))
+        .await?;
+    let Some(chat_id) = chat_id else {
+        return Ok(String::new());
+    };
+    let mut names = Vec::new();
+    for contact_id in get_chat_contacts(context, chat_id).await? {
+        if contact_id == ContactId::SELF {
+            continue;
+        }
+        if let Ok(contact) = Contact::get_by_id(context, contact_id).await {
+            names.push(contact.get_display_name().to_string());
+        }
+    }
+    Ok(names.join(", "))
 }
 
 /// Drops the recipient set of `msg_id`.

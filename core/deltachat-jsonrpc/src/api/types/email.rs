@@ -485,6 +485,13 @@ pub struct JsonrpcMessageRow {
     pub preview: String,
     /// Display name of the sender, falling back to their address.
     pub from: String,
+    /// Sent by this account rather than received.
+    pub outgoing: bool,
+    /// Display line of the `To:` recipients.
+    ///
+    /// Empty on incoming mail. A client shows `from` there, so paying for a
+    /// recipient-set lookup on every inbox row would buy nothing.
+    pub to: String,
     /// Unix timestamp used for sorting and display.
     pub timestamp: i64,
     /// Not yet seen.

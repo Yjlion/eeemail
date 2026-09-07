@@ -23,6 +23,25 @@ export async function stageAttachment(file: File): Promise<string> {
 }
 
 /**
+ * Writes a message out as a file the user picks, and returns where it went.
+ *
+ * The mirror of [`stageAttachment`], and it matters more in this direction: the
+ * local database *is* the mailbox, so an export is how a message comes to exist
+ * anywhere else at all.
+ *
+ * `null` means the user cancelled the save dialog. That is not an error and
+ * must not be reported as one.
+ */
+export async function exportFile(name: string, bytes: Uint8Array): Promise<string | null> {
+  if (isDemo) return `/demo/${name}`;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return (await invoke("export_message", {
+    name,
+    bytes: Array.from(bytes),
+  })) as string | null;
+}
+
+/**
  * Whether the first-launch disclosure still has to be shown.
  *
  * A file beside the accounts, not a config value: the disclosure comes *before*

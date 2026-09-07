@@ -31,9 +31,19 @@ export const state = {
     bcc: string;
     subject: string;
     body: string;
+    /** The formatted body, when the draft came from formatted mode. */
+    html: string | null;
   },
   /** How many messages are waiting in the unverified view, for the sidebar badge. */
   unverifiedCount: 0,
+  /** A check for new mail is in flight, so the refresh control is busy. */
+  refreshing: false,
+  /**
+   * The engine's last reported connectivity, or `null` before it has been
+   * asked. One of core's `DC_CONNECTIVITY_*` values: 1000 not connected, 2000
+   * connecting, 3000 working, 4000 connected.
+   */
+  connectivity: null as number | null,
 };
 
 /** Views re-render through this, so no view needs a reference to another. */

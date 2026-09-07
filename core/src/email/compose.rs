@@ -138,12 +138,17 @@ fn split_addr(input: &str) -> (String, String) {
 /// One attachment, because core carries one file per message. Sending several
 /// files means several messages, and pretending otherwise here would only move
 /// the surprise further from where the user chose them.
+///
+/// `html`, when given, is sent as a `text/html` alternative *beside* `text`,
+/// which stays the plain-text fallback and is never optional. See
+/// `docs/adr/0025-composed-html.md`.
 pub async fn send(
     context: &Context,
     recipients: &RecipientSet,
     subject: &str,
     text: &str,
     attachment: Option<&std::path::Path>,
+    html: Option<&str>,
 ) -> Result<MsgId> {
     ensure!(!recipients.is_empty(), "a message needs a recipient");
     let Some(primary) = recipients.to.first() else {
@@ -184,6 +189,15 @@ pub async fn send(
     };
     if !subject.trim().is_empty() {
         msg.set_subject(subject.to_string());
+    }
+
+    // Beside `text`, never instead of it. `set_html` sets `Param::SendHtml`,
+    // which is what makes `MimeFactory` emit a `multipart/alternative` with the
+    // plain text as the fallback part -- so a correspondent whose client shows
+    // `text/plain` reads the message rather than a blank body. Replacing the
+    // text would be the one way to turn formatting into a delivery failure.
+    if let Some(html) = html.map(str::trim).filter(|html| !html.is_empty()) {
+        msg.set_html(Some(html.to_string()));
     }
 
     // Persisting as a draft is what assigns the id. Without an id there is

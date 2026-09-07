@@ -36,6 +36,7 @@ Testing: [`../testing.md`](../testing.md)
 | [0022](0022-desktop-distribution.md) | eeemail ships as a platform installer, not as a folder of executables | Accepted · archive contents amended by [0024](0024-portable-archives.md) |
 | [0023](0023-first-launch-disclosure.md) | The application says what it is, before it asks for a mail password | Accepted |
 | [0024](0024-portable-archives.md) | The release archive holds the app, not only the tools, and runs unzipped | Accepted |
+| [0025](0025-composed-html.md) | Composed HTML is a whitelisted alternative, never a replacement | Accepted |
 
 ## Deferred
 

@@ -312,6 +312,7 @@ async fn test_an_encrypted_reply_from_someone_you_wrote_to_is_not_held() -> Resu
         "Numbers",
         "hello",
         None,
+        None,
     )
     .await?;
     alice.pop_sent_msg().await;

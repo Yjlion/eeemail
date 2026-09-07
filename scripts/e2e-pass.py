@@ -93,7 +93,7 @@ def step2_send_cc(rpc: Rpc, alice: int, bob: int, workdir: str) -> int:
 
     rpc.call("send_email", alice,
              {"to": [f"bob@{DOMAIN}"], "cc": [f"carol@{DOMAIN}"], "bcc": []},
-             SUBJECT, BODY, attachment)
+             SUBJECT, BODY, attachment, None)
 
     # Held, not delivered: alice is neither verified nor known to bob, which is
     # step 3's subject. Here it is only how we find the message.
@@ -126,7 +126,7 @@ def step2_send_cc(rpc: Rpc, alice: int, bob: int, workdir: str) -> int:
 def step2b_reply_encrypts(rpc: Rpc, alice: int, bob: int) -> None:
     """bob replies; alice's Autocrypt header means it goes out encrypted."""
     rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
-             f"Re: {SUBJECT}", "Checked -- you are right.", None)
+             f"Re: {SUBJECT}", "Checked -- you are right.", None, None)
 
     def arrived():
         ids = rpc.call("get_tagged_messages", alice, "inbox")
@@ -199,7 +199,7 @@ def step3b_securejoin(rpc: Rpc, alice: int, bob: int) -> None:
     check(True, "SecureJoin completes and alice becomes a verified key contact")
 
     rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
-             "Verified now", "This one should be encrypted.", None)
+             "Verified now", "This one should be encrypted.", None, None)
 
     def arrived():
         for candidate in rpc.call("get_tagged_messages", alice, "inbox"):
@@ -212,6 +212,55 @@ def step3b_securejoin(rpc: Rpc, alice: int, bob: int) -> None:
     crypto = rpc.call("get_message_crypto", alice, msg_id)
     check(crypto["encrypted"] is True, "mail to a verified contact is encrypted")
     check(crypto["verified"] is True, "and is reported as verified")
+
+
+# ---------------------------------------------------------------------------
+# Step 3c -- formatted mail carries both parts
+# ---------------------------------------------------------------------------
+
+HTML_SUBJECT = "Formatted"
+HTML_BODY = "<p>The <b>second</b> column.</p>"
+HTML_TEXT = "The second column."
+
+
+def step3c_html(rpc: Rpc, alice: int, bob: int) -> None:
+    """Sends an HTML message and checks the plain-text part survived.
+
+    The property worth a live pass rather than a unit test is the one that
+    breaks correspondents: `html` is an *alternative* beside `text`, never a
+    replacement for it, so a client that shows `text/plain` must get the
+    message and not a blank body. Nothing in the unit suite sends over real
+    SMTP, and the alternative is assembled by `MimeFactory` on the way out.
+    """
+    rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
+             HTML_SUBJECT, HTML_TEXT, None, HTML_BODY)
+
+    def arrived():
+        for candidate in rpc.call("get_tagged_messages", alice, "inbox"):
+            row = rpc.call("get_message_rows", alice, [candidate])[0]
+            if row["subject"] == HTML_SUBJECT:
+                return candidate
+        return None
+
+    msg_id = wait_for(arrived, "alice to receive the formatted message")
+
+    message = rpc.call("get_message", alice, msg_id)
+    check(message["hasHtml"] is True, "a formatted message arrives marked as HTML")
+    html = rpc.call("get_message_html", alice, msg_id)
+    check(html is not None and "<b>second</b>" in html,
+          "the HTML alternative survives the round trip", f"got {html!r}")
+
+    # The part that matters. A recipient reading plain text gets the words.
+    check(HTML_TEXT in message["text"],
+          "the plain-text alternative is present and is not the markup",
+          f"got {message['text']!r}")
+    check("<p>" not in message["text"],
+          "and the plain-text part is not the HTML source",
+          f"got {message['text']!r}")
+
+    raw = rpc.call("get_message_raw_mime", alice, msg_id)
+    check(raw is not None and "multipart/alternative" in raw,
+          "the message is a multipart/alternative on the wire")
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +415,8 @@ def main() -> int:
         run("step 2b: the reply encrypts, having learned the key",
             step2b_reply_encrypts, rpc, alice, bob)
         run("step 3b: SecureJoin", step3b_securejoin, rpc, alice, bob)
+        run("step 3c: formatted mail carries both parts",
+            step3c_html, rpc, alice, bob)
 
         if msg_id is not None:
             run("step 4: a timer fires and the message survives it",

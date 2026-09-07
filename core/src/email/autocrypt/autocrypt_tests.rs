@@ -217,6 +217,7 @@ async fn test_mail_after_an_autocrypt_header_is_encrypted() -> Result<()> {
         "Subject",
         "the body",
         None,
+        None,
     )
     .await?;
     let sent = alice.pop_sent_msg().await;

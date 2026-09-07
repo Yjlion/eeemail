@@ -80,6 +80,7 @@ async fn test_a_verified_contact_gets_an_encrypted_chat() -> Result<()> {
         "Subject",
         "the body",
         None,
+        None,
     )
     .await?;
     let sent = alice.pop_sent_msg().await;
@@ -447,5 +448,148 @@ async fn test_the_recipient_set_survives_sending() -> Result<()> {
     let to = load_kind(&alice, msg_id, RecipientKind::To).await?;
     assert_eq!(to.len(), 1);
     assert_eq!(to[0].addr, "bob@example.net");
+    Ok(())
+}
+
+/// The HTML body used by the formatting tests, and its plain-text counterpart.
+const HTML: &str = "<p>The <b>second</b> column.</p>";
+const TEXT: &str = "The second column.";
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_html_is_sent_beside_the_text_not_instead_of_it() -> Result<()> {
+    let alice = TestContext::new_alice().await;
+    alice.allow_unencrypted().await?;
+
+    send(
+        &alice,
+        &RecipientSet {
+            to: vec!["bob@example.net".to_string()],
+            ..Default::default()
+        },
+        "Formatted",
+        TEXT,
+        None,
+        Some(HTML),
+    )
+    .await?;
+    let sent = alice.pop_sent_msg().await;
+    let payload = sent.payload();
+
+    assert!(
+        payload.contains("multipart/alternative"),
+        "no alternative part on the wire:\n{payload}"
+    );
+    assert!(payload.contains("text/html"), "no HTML part:\n{payload}");
+    // The property that breaks correspondents rather than merely looking wrong:
+    // a client showing `text/plain` has to get the message, not a blank body.
+    assert!(
+        payload.contains("text/plain"),
+        "the plain-text alternative is gone:\n{payload}"
+    );
+    assert!(
+        payload.contains(TEXT),
+        "the plain text is not on the wire:\n{payload}"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_html_survives_the_draft_round_trip() -> Result<()> {
+    let alice = TestContext::new_alice().await;
+    alice.allow_unencrypted().await?;
+
+    let msg_id = send(
+        &alice,
+        &RecipientSet {
+            to: vec!["bob@example.net".to_string()],
+            ..Default::default()
+        },
+        "Formatted",
+        TEXT,
+        None,
+        Some(HTML),
+    )
+    .await?;
+    alice.pop_sent_msg().await;
+
+    // `send` persists the message as a draft to get an id for the recipient set,
+    // and `prepare_msg_raw` then *recomputes* `mime_modified` from the in-memory
+    // message rather than from the stored row. That works, and it is exactly the
+    // kind of thing that regresses into silently sending text-only mail, so it
+    // is asserted directly rather than inferred from the wire format above.
+    let msg = Message::load_from_db(&alice, msg_id).await?;
+    assert!(msg.has_html(), "the stored message lost its HTML");
+    let html = msg_id.get_html(&alice).await?;
+    assert!(
+        html.is_some_and(|html| html.contains("<b>second</b>")),
+        "the stored HTML is not what was composed"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_an_unformatted_message_is_unchanged() -> Result<()> {
+    let alice = TestContext::new_alice().await;
+    alice.allow_unencrypted().await?;
+
+    for html in [None, Some(""), Some("   ")] {
+        let msg_id = send(
+            &alice,
+            &RecipientSet {
+                to: vec!["bob@example.net".to_string()],
+                ..Default::default()
+            },
+            "Plain",
+            TEXT,
+            None,
+            html,
+        )
+        .await?;
+        let sent = alice.pop_sent_msg().await;
+        assert!(
+            !sent.payload().contains("multipart/alternative"),
+            "an empty html argument still produced an alternative:\n{}",
+            sent.payload()
+        );
+        assert!(!Message::load_from_db(&alice, msg_id).await?.has_html());
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_html_with_an_attachment_keeps_both() -> Result<()> {
+    let alice = TestContext::new_alice().await;
+    alice.allow_unencrypted().await?;
+
+    let path = alice.get_blobdir().join("note.txt");
+    tokio::fs::write(&path, b"attached").await?;
+
+    send(
+        &alice,
+        &RecipientSet {
+            to: vec!["bob@example.net".to_string()],
+            ..Default::default()
+        },
+        "Formatted with a file",
+        TEXT,
+        Some(&path),
+        Some(HTML),
+    )
+    .await?;
+    let sent = alice.pop_sent_msg().await;
+    let payload = sent.payload();
+
+    // An attachment nests the alternative inside a mixed part rather than
+    // replacing it. Getting this wrong drops either the formatting or the file,
+    // and which one is not obvious from reading the code.
+    assert!(
+        payload.contains("multipart/mixed"),
+        "no mixed part for the attachment:\n{payload}"
+    );
+    assert!(
+        payload.contains("multipart/alternative"),
+        "the attachment displaced the alternative:\n{payload}"
+    );
+    assert!(payload.contains("note.txt"), "the file is gone:\n{payload}");
     Ok(())
 }

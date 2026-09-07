@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The shell is one IPC pipe: a command in, an event stream out. `rpc_send`, `stage_attachment`, `first_run_pending` and `acknowledge_first_run` are app commands and need no permission here; `listen` is the core event plugin and does. Without this file the ACL resolves to nothing and every engine event is refused -- which is exactly what shipped in v0.3.0.",
+  "description": "The shell is one IPC pipe: a command in, an event stream out. `rpc_send`, `stage_attachment`, `export_message`, `first_run_pending` and `acknowledge_first_run` are app commands and need no permission here; `listen` is the core event plugin and does. `tauri-plugin-dialog` is registered for `export_message`'s save dialog, which is opened from Rust rather than invoked by the frontend, so it needs no permission either -- the ACL governs what the renderer may call. Without this file the ACL resolves to nothing and every engine event is refused -- which is exactly what shipped in v0.3.0.",
   "windows": ["main"],
   "permissions": ["core:event:default"]
 }

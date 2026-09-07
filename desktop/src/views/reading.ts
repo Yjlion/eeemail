@@ -23,8 +23,8 @@ import type {
   ThreadItem,
   TrashedMessage,
 } from "../types";
-import { refreshList } from "./list";
-import { refreshUnverifiedCount } from "./sidebar";
+import { reload } from "../nav";
+import { run as runAction, showMenuFor } from "../actions";
 
 function days(from: number, to: number): number {
   return Math.max(0, Math.round((to - from) / 86_400));
@@ -96,7 +96,10 @@ export async function renderReading(el: HTMLElement): Promise<void> {
       `<div class="notice warn">
          <strong>This sender is not verified and not in your contacts.</strong>
          It is waiting here rather than in your inbox, and moves to the trash if
-         you do nothing. <button class="inline" data-act="accept">Accept sender</button>
+         you do nothing.
+         <button class="inline" data-act="add-contact">Add sender to contacts</button>
+         <button class="inline" data-act="accept">Accept sender</button>
+         <button class="inline" data-act="verify">Verify by code&hellip;</button>
        </div>`,
     );
   }
@@ -112,6 +115,7 @@ export async function renderReading(el: HTMLElement): Promise<void> {
          }
          It is still here for ${days(now, trashed.purgeAt)} more days.
          <button class="inline" data-act="restore">Restore</button>
+         <button class="inline danger" data-act="delete-forever">Delete permanently&hellip;</button>
        </div>`,
     );
   }
@@ -147,6 +151,8 @@ export async function renderReading(el: HTMLElement): Promise<void> {
       <button data-act="reply-all">Reply all</button>
       <button data-act="archive">Archive</button>
       <button data-act="trash">Trash</button>
+      <button data-act="view-source" ${retained ? "" : "disabled"}>View source</button>
+      <button data-act="export" ${retained ? "" : "disabled"}>Export&hellip;</button>
       <label class="timer">
         Expire in
         <select data-act="timer">
@@ -181,8 +187,8 @@ export async function renderReading(el: HTMLElement): Promise<void> {
     <div class="footnote">
       ${
         retained
-          ? "Original message source is available."
-          : "Original source has expired and is no longer available."
+          ? "Original message source is available, and can be viewed or exported."
+          : "Original source has expired, so it cannot be viewed or exported."
       }
       ${
         expiresAt !== null
@@ -212,7 +218,7 @@ export async function renderReading(el: HTMLElement): Promise<void> {
     await renderThread(el.querySelector<HTMLElement>("#thread")!, thread);
   }
 
-  wireActions(el, msgId, msg, recipients);
+  wireActions(el, msgId, msg.chatId, tags, retained);
 }
 
 /**
@@ -343,60 +349,45 @@ async function renderThread(container: HTMLElement, thread: ThreadItem[]): Promi
 function wireActions(
   el: HTMLElement,
   msgId: number,
-  msg: Message,
-  recipients: Recipient[],
+  chatId: number,
+  tags: MessageTags,
+  retained: boolean,
 ): void {
   const account = state.accountId;
 
-  const openComposer = (all: boolean) => {
-    const to = recipients.filter((r) => r.kind === "to").map((r) => r.addr);
-    const cc = all ? recipients.filter((r) => r.kind === "cc").map((r) => r.addr) : [];
-    const subject = msg.subject?.trim() ?? "";
-    state.composerDraft = {
-      // Reply goes to whoever the message came from; reply-all keeps the copies.
-      to: to.join(", "),
-      cc: cc.join(", "),
-      bcc: "",
-      subject: subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`,
-      body: `\n\n> ${(msg.text ?? "").split("\n").join("\n> ")}`,
-    };
-    state.screen = "composer";
-    changed();
-  };
-
   const after = async () => {
-    await refreshList();
-    await refreshUnverifiedCount();
+    await reload();
     state.selectedMsgId = null;
     changed();
   };
 
   for (const button of el.querySelectorAll<HTMLButtonElement>("button[data-act]")) {
+    const act = button.dataset["act"];
+    if (act === undefined) continue;
     button.addEventListener("click", async () => {
-      switch (button.dataset["act"]) {
-        case "reply":
-          return openComposer(false);
-        case "reply-all":
-          return openComposer(true);
-        case "archive":
-          await rpc.call("archive_messages", [account, [msgId]]);
-          return after();
-        case "trash":
-          await rpc.call("trash_messages", [account, [msgId]]);
-          return after();
-        case "restore":
-          await rpc.call("restore_messages", [account, [msgId]]);
-          return after();
-        case "accept": {
-          // Accepting the sender, not the message: past and future mail from
-          // them leaves the unverified view together.
-          const chatId = msg.chatId;
-          await rpc.call("accept_chat", [account, chatId]);
-          return after();
-        }
+      if (act === "accept") {
+        // Accepting the sender, not the message: past and future mail from them
+        // leaves the unverified view together. Kept apart from the shared
+        // actions because it is the only one that is about the *chat*.
+        await rpc.call("accept_chat", [account, chatId]);
+        return after();
       }
+      // Everything else is the same action the context menu runs, from the same
+      // implementation. Two lists of message actions is how the unverified view
+      // ended up with exactly one.
+      if (await runAction(act, msgId)) await after();
     });
   }
+
+  // The whole pane, not only the header: a right-click on the body of the
+  // message the user is reading should offer the same things as a right-click
+  // on its row.
+  el.addEventListener("contextmenu", (event) => {
+    // Not over the sandboxed body frame. That document is the message's, and
+    // its own context menu is the browser's business, not ours.
+    if ((event.target as Element).closest("iframe")) return;
+    void showMenuFor(event, { msgId, tags: tags.system, retained });
+  });
 
   const timer = el.querySelector<HTMLSelectElement>("select[data-act='timer']");
   timer?.addEventListener("change", async () => {

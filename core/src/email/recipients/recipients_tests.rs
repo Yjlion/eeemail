@@ -262,3 +262,57 @@ async fn test_config_default_still_loads() -> Result<()> {
     assert!(t.get_config(Config::Addr).await?.is_some());
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_to_display_names_then_addresses_in_header_order() -> Result<()> {
+    let t = TestContext::new_alice().await;
+    t.allow_unencrypted().await?;
+    let received = receive_imf(&t, CLASSIC, false).await?.unwrap();
+    let msg_id = *received.msg_ids.last().unwrap();
+
+    // Named where the header named them, bare where it did not, and Cc left out
+    // entirely: this is the line a Sent list puts where the sender would go, and
+    // the sender is one person.
+    assert_eq!(
+        to_display(&t, msg_id).await?,
+        "Bob, carol@example.com".to_string()
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_to_display_falls_back_to_the_chat_members() -> Result<()> {
+    let alice = TestContext::new_alice().await;
+    alice.allow_unencrypted().await?;
+    let chat = alice
+        .create_chat_with_contact("Bob", "bob@example.net")
+        .await;
+
+    let mut msg = Message::new(Viewtype::Text);
+    msg.set_text("outgoing".to_string());
+    let sent = alice.send_msg(chat.id, &mut msg).await;
+    let msg_id = sent.sender_msg_id;
+
+    // Mail sent before per-message recipient sets existed has no row here, and
+    // so does everything in an imported Delta Chat profile. Falling back is what
+    // stops those rows rendering blank -- which is the same defect as rendering
+    // the user's own name, only quieter.
+    delete(&alice, msg_id).await?;
+    assert!(load(&alice, msg_id).await?.is_empty());
+
+    let display = to_display(&alice, msg_id).await?;
+    assert_eq!(display, "Bob".to_string());
+    // Self is a member of every chat and is never an addressee.
+    assert!(!display.contains("alice@example.org"));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_to_display_is_empty_when_nothing_is_known() -> Result<()> {
+    let t = TestContext::new_alice().await;
+    // An id with no message behind it at all. Empty, rather than an error or a
+    // guess: a client renders this in place of a name, so inventing one would
+    // put a wrong addressee on screen.
+    assert_eq!(to_display(&t, MsgId::new(12345)).await?, String::new());
+    Ok(())
+}
