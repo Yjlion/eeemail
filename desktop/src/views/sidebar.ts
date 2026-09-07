@@ -7,23 +7,10 @@
  * See `docs/adr/0017-system-tags.md`.
  */
 
-import { rpc } from "../client";
 import { state, changed } from "../state";
+import { reload } from "../nav";
 import { escapeHtml } from "../html";
 import { SYSTEM_TAGS, TAG_LABELS, type SystemTag } from "../types";
-
-export async function refreshUnverifiedCount(): Promise<void> {
-  try {
-    const ids = (await rpc.call("get_tagged_messages", [
-      state.accountId,
-      "unverified",
-    ])) as number[];
-    state.unverifiedCount = ids.length;
-  } catch {
-    // A count is decoration. Failing to fetch it must not take the sidebar down.
-    state.unverifiedCount = 0;
-  }
-}
 
 export function renderSidebar(el: HTMLElement): void {
   const current = (test: boolean) => (test ? "true" : "false");
@@ -75,6 +62,11 @@ export function renderSidebar(el: HTMLElement): void {
         state.screen = null;
         state.view = { kind: "tag", tag: tag as SystemTag };
         state.selectedMsgId = null;
+        // `reload`, not `changed`. A repaint renders `state.messageIds`, which
+        // nothing here has refetched -- so for two releases clicking Sent drew
+        // the Sent heading over the inbox's rows. Every view had this; Sent and
+        // Trash are only where it was impossible to miss.
+        return void reload();
       } else if (labelId) {
         state.screen = null;
         state.view = {
@@ -83,6 +75,7 @@ export function renderSidebar(el: HTMLElement): void {
           name: button.textContent ?? "",
         };
         state.selectedMsgId = null;
+        return void reload();
       }
       changed();
     });

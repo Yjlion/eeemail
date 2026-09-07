@@ -14,8 +14,9 @@
 
 import { rpc, isDemo } from "./client";
 import { state, changed, onChange, applyHash } from "./state";
-import { renderSidebar, refreshUnverifiedCount } from "./views/sidebar";
-import { refreshList, renderList } from "./views/list";
+import { reload, refreshConnectivity } from "./nav";
+import { renderSidebar } from "./views/sidebar";
+import { renderList, renderListHeader } from "./views/list";
 import { renderReading } from "./views/reading";
 import { renderComposer } from "./views/composer";
 import { renderContacts } from "./views/contacts";
@@ -47,6 +48,17 @@ async function boot(): Promise<void> {
   // eeemail's defaults are applied at setup, not as compile-time defaults, so
   // every entry point has to ask for them. See ADR 0012.
   await rpc.call("apply_eeemail_defaults", [state.accountId]);
+
+  // On every boot, and after the defaults rather than before: the only other
+  // `start_io` in this client is in the setup form, so for eight releases the
+  // scheduler ran exactly once -- in the session that created the account. Every
+  // launch after that had no IMAP loop, fetched nothing, sent nothing queued,
+  // and so never emitted the events the rest of this function subscribes to.
+  // Safe unconditionally: the engine returns early on an unconfigured account
+  // and starting an already-started scheduler is a no-op.
+  await rpc.call("start_io", [state.accountId]);
+  void refreshConnectivity();
+
   state.labels = (await rpc.call("get_labels", [state.accountId])) as Label[];
 
   // After the labels load, so a `#/label/10` link can resolve its name.
@@ -55,21 +67,19 @@ async function boot(): Promise<void> {
     if (applyHash()) void reload();
   });
 
-  // New mail arrives pushed, not polled.
+  // New mail arrives pushed, not polled. The refresh button is a nudge for when
+  // it has not, not the mechanism.
   rpc.onEvent(({ event }) => {
     const kind = (event as { kind?: string } | undefined)?.kind;
     if (kind === "IncomingMsg" || kind === "MsgsChanged") {
       void reload();
     }
+    if (kind === "ConnectivityChanged") {
+      void refreshConnectivity().then(changed);
+    }
   });
 
   await reload();
-}
-
-/** Re-reads the current list from the engine, then repaints. */
-async function reload(): Promise<void> {
-  await Promise.all([refreshList(), refreshUnverifiedCount()]);
-  changed();
 }
 
 let painting = false;
@@ -125,13 +135,14 @@ async function paint(): Promise<void> {
   app!.innerHTML = `
     <nav class="sidebar" id="sidebar"></nav>
     <section class="list-pane">
-      <div class="search"><input id="search" type="search" placeholder="Search mail" /></div>
+      <div class="pane-head" id="pane-head"></div>
       <div class="list" id="list"></div>
     </section>
     <main class="reading" id="reading"></main>
   `;
 
   renderSidebar(app!.querySelector<HTMLElement>("#sidebar")!);
+  renderListHeader(app!.querySelector<HTMLElement>("#pane-head")!);
   wireSearch(app!.querySelector<HTMLInputElement>("#search")!);
 
   const list = app!.querySelector<HTMLElement>("#list")!;

@@ -39,8 +39,8 @@ and both are the same application.
 `.AppImage` on Linux, an NSIS installer on Windows.
 
 ```sh
-sha256sum -c eeemail_0.3.1_amd64.deb.sha256   # verify first
-sudo apt install ./eeemail_0.3.1_amd64.deb
+sha256sum -c eeemail_0.4.0_amd64.deb.sha256   # verify first
+sudo apt install ./eeemail_0.4.0_amd64.deb
 ```
 
 **A zip you unzip and run**, if you would rather not install anything.
@@ -86,9 +86,18 @@ can set. See [ADR 0019](docs/adr/0019-recoverable-ephemeral-expiry.md).
 
 ## Status
 
-**v0.3.1 is the first release whose desktop app actually runs.** v0.3.0 shipped
-with an empty Tauri ACL, so the frontend could not attach to the engine's event
-stream and no installed copy worked at all; it is also the first release you can
+**v0.4.0 is the first release in which Reply addresses the sender.** In v0.3.0
+and v0.3.1 it was addressed to the reader's own account: the reply's `To` was
+read from the message's stored recipient set, which on received mail holds the
+incoming `To:` header and so names the reader. Nothing caught it, because the
+screenshots photograph a rendered composer and the live passes call `send_email`
+with addresses of their own. This release also adds the right-click menu, Sent,
+view source, export, refresh, empty trash, a verify path for unverified mail,
+and formatted composing ([ADR 0025](docs/adr/0025-composed-html.md)).
+
+v0.3.1 was the first release whose desktop app ran at all. v0.3.0 shipped with
+an empty Tauri ACL, so the frontend could not attach to the engine's event
+stream and no installed copy worked; v0.3.1 is also the first release you can
 unzip and run without installing. The engine is complete through Phase 14, the
 desktop client reads and writes, and the whole thing has been run end to end
 against a real mail server, against Delta Chat's own engine, and against GnuPG.

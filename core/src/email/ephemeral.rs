@@ -341,10 +341,31 @@ pub async fn purge(context: &Context) -> Result<usize> {
             .await;
     }
 
-    for &msg_id in &due {
+    let purged = destroy(context, &due).await?;
+    info!(context, "Purged {purged} trashed message(s).");
+    context.emit_msgs_changed_without_ids();
+    Ok(purged)
+}
+
+/// Destroys trashed messages for real, ignoring every deadline.
+///
+/// Private and unconditional: whoever calls this has already decided these
+/// belong to the trash. Shared by [`purge`], [`destroy_now`] and [`empty`] so
+/// the destruction step itself cannot drift apart between the deadline path and
+/// the two the user drives. `MsgId::trash` rewrites the row into a tombstone
+/// that suppresses re-download, and the `trashed_msgs` row has to go in the
+/// same pass or housekeeping keeps reading a deadline for a message that is
+/// already gone.
+///
+/// Emits nothing and logs nothing. The caller knows which of the three it is.
+async fn destroy(context: &Context, msgs: &[MsgId]) -> Result<usize> {
+    if msgs.is_empty() {
+        return Ok(0);
+    }
+    for &msg_id in msgs {
         msg_id.trash(context, true).await?;
     }
-    let ids = due.clone();
+    let ids: Vec<MsgId> = msgs.to_vec();
     context
         .sql
         .transaction(move |transaction| {
@@ -354,9 +375,75 @@ pub async fn purge(context: &Context) -> Result<usize> {
             Ok(())
         })
         .await?;
-    info!(context, "Purged {} trashed message(s).", due.len());
-    context.emit_msgs_changed_without_ids();
-    Ok(due.len())
+    Ok(msgs.len())
+}
+
+/// Destroys the given messages now, skipping the recoverable window.
+///
+/// **Ids that are not in the trash are skipped, not destroyed**, and that
+/// filter is the whole safety property rather than a nicety. Trash is the only
+/// place in eeemail that destroys mail ([ADR 0019]); without the filter,
+/// "skip the deadline" quietly becomes "skip the trash" and this is an
+/// unrestricted delete for any message id a caller can name.
+///
+/// Returns how many were actually destroyed, so a caller that passed an id
+/// which was never trashed learns that rather than assuming it worked.
+///
+/// [ADR 0019]: ../../../docs/adr/0019-recoverable-ephemeral-expiry.md
+pub async fn destroy_now(context: &Context, msgs: &[MsgId]) -> Result<usize> {
+    if msgs.is_empty() {
+        return Ok(0);
+    }
+    let mut trashed = Vec::with_capacity(msgs.len());
+    for &msg_id in msgs {
+        let known: Option<MsgId> = context
+            .sql
+            .query_get_value("SELECT msg_id FROM trashed_msgs WHERE msg_id=?", (msg_id,))
+            .await?;
+        if known.is_some() {
+            trashed.push(msg_id);
+        }
+    }
+
+    let destroyed = destroy(context, &trashed).await?;
+    if destroyed > 0 {
+        info!(
+            context,
+            "Destroyed {destroyed} trashed message(s) on request."
+        );
+        context.emit_msgs_changed_without_ids();
+    }
+    Ok(destroyed)
+}
+
+/// Destroys everything in the trash now. Returns how many were destroyed.
+///
+/// The union of [`in_trash`] and every row in `trashed_msgs`, not either alone.
+/// They are normally the same set and not always: [`to_trash`] writes both,
+/// while a `Trash` label replayed from another device arrives through
+/// `labels::sync_set` and writes only the label -- so that message carries no
+/// deadline, [`purge`] will never see it, and it sits in the trash forever.
+/// Emptying the trash has to empty what the user is looking at. The other
+/// direction, a `trashed_msgs` row whose label was taken off by hand, is
+/// covered by the same union.
+pub async fn empty(context: &Context) -> Result<usize> {
+    let mut ids = in_trash(context).await?;
+    let with_deadline: Vec<MsgId> = context
+        .sql
+        .query_map_vec("SELECT msg_id FROM trashed_msgs", (), |row| {
+            Ok(row.get::<_, MsgId>(0)?)
+        })
+        .await?;
+    ids.extend(with_deadline);
+    ids.sort_unstable();
+    ids.dedup();
+
+    let destroyed = destroy(context, &ids).await?;
+    if destroyed > 0 {
+        info!(context, "Emptied the trash: {destroyed} message(s).");
+        context.emit_msgs_changed_without_ids();
+    }
+    Ok(destroyed)
 }
 
 #[cfg(test)]

@@ -312,6 +312,10 @@ function rowOf(msgId: number): Row | undefined {
 }
 
 /** Answers the same methods as `Rpc`, from the data above. */
+/** Core's contact id for the account itself, and the demo's own address. */
+const SELF_CONTACT_ID = 1;
+const SELF_ADDRESS = "you@example.org";
+
 export class DemoRpc {
   async ready(): Promise<void> {}
 
@@ -367,14 +371,58 @@ export class DemoRpc {
         return ids
           .map(rowOf)
           .filter((r): r is Row => r !== undefined)
-          .map(({ body, to, cc, parent, fromAddr, structured, ...row }) => row);
+          .map(({ body, to, cc, parent, fromAddr, structured, ...row }) => ({
+            ...row,
+            // What the engine computes from message state and the recipient
+            // set. Derived here from the same data so a Sent row in the demo
+            // reads the way a Sent row reads against a real mailbox.
+            outgoing: row.tags.includes("sent"),
+            to: row.tags.includes("sent") ? to.join(", ") : "",
+          }));
       }
       case "get_message": {
         const r = rowOf(arg<number>(1));
         return r
-          ? { id: r.msgId, subject: r.subject, text: r.body, hasHtml: false }
+          ? {
+              id: r.msgId,
+              chatId: r.msgId,
+              subject: r.subject,
+              text: r.body,
+              hasHtml: false,
+              fromId: r.msgId,
+            }
           : null;
       }
+      case "get_contact": {
+        const id = arg<number>(1);
+        // Contact 1 is the account itself, in a demo as in a real profile.
+        // Answering it with a message row would tell the reply path that the
+        // user is whoever sent message 1, and reply-all would then drop that
+        // person as though they were self.
+        if (id === SELF_CONTACT_ID) {
+          return { id, address: SELF_ADDRESS, displayName: "You", isVerified: true };
+        }
+        const known = CONTACTS.find((c) => c.id === id);
+        if (known) return known;
+        // Otherwise the id is a `fromId`, which the demo keys to the message
+        // row it came from -- see `get_message`.
+        const r = rowOf(id);
+        return {
+          id,
+          address: r?.fromAddr ?? "someone@example.org",
+          displayName: r?.from ?? "",
+          isVerified: r?.verified ?? false,
+        };
+      }
+      case "get_message_raw_mime":
+      case "get_message_raw_mime_bytes":
+        // A demo has no stored bytes. `null` is what the engine returns once
+        // retention has elapsed, and it is the branch worth photographing.
+        return null;
+      case "get_connectivity":
+        // Connected: a demo build has no engine, and a red dot in every
+        // screenshot would be a claim about the software rather than the mailbox.
+        return 4000;
       case "get_structured_data":
         return rowOf(arg<number>(1))?.structured ?? [];
       case "get_message_html":

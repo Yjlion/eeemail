@@ -14,8 +14,8 @@ file per platform, and both of them are the app.
 
 | File | What it is |
 |---|---|
-| `eeemail_0.3.1_amd64.deb`, `eeemail_0.3.1_amd64.AppImage` | The installer, for Linux |
-| `eeemail_0.3.1_x64-setup.exe` | The installer, for Windows |
+| `eeemail_0.4.0_amd64.deb`, `eeemail_0.4.0_amd64.AppImage` | The installer, for Linux |
+| `eeemail_0.4.0_x64-setup.exe` | The installer, for Windows |
 | `eeemail-linux-amd64.zip`, `eeemail-windows-amd64.zip` | The app and both command-line tools, unzip and run |
 
 **An installer** puts eeemail in your applications menu with an icon, which is
@@ -33,14 +33,14 @@ Every file has a `.sha256` beside it. Checking it costs one command and means a
 corrupted or substituted download fails loudly rather than quietly:
 
 ```sh
-sha256sum -c eeemail_0.3.1_amd64.deb.sha256
+sha256sum -c eeemail_0.4.0_amd64.deb.sha256
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-(Get-FileHash .\eeemail_0.3.1_x64-setup.exe -Algorithm SHA256).Hash
-Get-Content .\eeemail_0.3.1_x64-setup.exe.sha256
+(Get-FileHash .\eeemail_0.4.0_x64-setup.exe -Algorithm SHA256).Hash
+Get-Content .\eeemail_0.4.0_x64-setup.exe.sha256
 ```
 
 The two hashes must match. Note what this does and does not do: it proves the
@@ -52,7 +52,7 @@ Windows SmartScreen and any Linux desktop that checks signatures will say so.
 **Debian, Ubuntu and derivatives.**
 
 ```sh
-sudo apt install ./eeemail_0.3.1_amd64.deb
+sudo apt install ./eeemail_0.4.0_amd64.deb
 ```
 
 eeemail then appears in your applications menu. Launch it there, or run
@@ -61,8 +61,8 @@ eeemail then appears in your applications menu. Launch it there, or run
 **Any other Linux — the AppImage.**
 
 ```sh
-chmod +x eeemail_0.3.1_amd64.AppImage
-./eeemail_0.3.1_amd64.AppImage
+chmod +x eeemail_0.4.0_amd64.AppImage
+./eeemail_0.4.0_amd64.AppImage
 ```
 
 An AppImage installs nothing and runs from wherever you put it. It will *not*
@@ -71,7 +71,7 @@ something like [Gear Lever](https://github.com/mijorus/gearlever) or
 `appimaged`. If you want a launcher entry without thinking about it, use the
 `.deb`.
 
-**Windows.** Run `eeemail_0.3.1_x64-setup.exe` and follow the installer.
+**Windows.** Run `eeemail_0.4.0_x64-setup.exe` and follow the installer.
 eeemail then appears in the Start menu. SmartScreen will warn that the publisher
 is unknown, because the installer is unsigned; "More info" → "Run anyway" is the
 way past it, and you should have checked the hash above before deciding to.
@@ -223,7 +223,7 @@ device is still holding.
 
 ```sh
 sudo apt remove eeemail          # Debian/Ubuntu
-rm eeemail_0.3.1_amd64.AppImage  # AppImage
+rm eeemail_0.4.0_amd64.AppImage  # AppImage
 ```
 
 On Windows, use "Add or remove programs".
@@ -271,7 +271,7 @@ use it. Set `DC_ACCOUNTS_PATH` and talk JSON Lines to it.
 
 ```sh
 eeemail                                    # installed .deb
-./eeemail_0.3.1_amd64.AppImage             # AppImage
+./eeemail_0.4.0_amd64.AppImage             # AppImage
 ./eeemail                                  # unzipped from the archive
 RUST_LOG=info eeemail                      # with engine logging
 ```

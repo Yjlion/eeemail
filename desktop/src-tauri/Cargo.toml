@@ -1,6 +1,6 @@
 [package]
 name = "eeemail-desktop"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 license = "MPL-2.0"
 description = "eeemail desktop client"
@@ -21,5 +21,13 @@ deltachat-jsonrpc = { path = "../../core/deltachat-jsonrpc" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tauri = { version = "2", features = [] }
+# Pinned exact, and deliberately not the latest. `tauri-plugin-dialog` 2.3+
+# requires `tauri ^2.6` and 2.7+ requires `^2.10`, either of which would drag
+# the Tauri stack -- which has to move in lockstep with the exact-pinned
+# `@tauri-apps/cli` and `@tauri-apps/api` in `desktop/package.json`. 2.2.2 asks
+# only for `tauri ^2` and so leaves that pin alone. Rust side only: the save
+# dialog is opened from `export_message`, not invoked from the frontend, so
+# there is no npm counterpart and no ACL entry.
+tauri-plugin-dialog = "=2.2.2"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
 yerpc = { workspace = true }

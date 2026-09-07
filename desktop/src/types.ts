@@ -87,6 +87,10 @@ export type MessageRow = {
   subject: string;
   preview: string;
   from: string;
+  /** Sent by this account rather than received. */
+  outgoing: boolean;
+  /** Who it went to. Empty on incoming mail, where `from` is the useful name. */
+  to: string;
   timestamp: number;
   unread: boolean;
   encrypted: boolean;

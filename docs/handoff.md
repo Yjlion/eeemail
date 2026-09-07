@@ -1,7 +1,9 @@
 # Handoff — Phases 10–14b, the first live pass, and v0.3.0
 
-**Written 2026-09-01, updated 2026-09-04.** Branch `main`; `v0.3.0` is tagged
-and published, **and does not work** — see immediately below.
+**Written 2026-09-01, updated 2026-09-06.** Branch `main`; `v0.3.0` is tagged
+and published, **and does not work** — see immediately below. The eight desktop
+issues #19–#26 landed after that; what they taught is in
+[what the eight desktop features taught](#what-the-eight-desktop-features-taught).
 
 ## v0.3.1 — what installing v0.3.0 found
 
@@ -408,6 +410,149 @@ release rather than only the hold.
 moves the correspondence to the key-contact and so to a second chat. A stock
 client replying there threads onto that message, not onto the cleartext
 original — which is correct, and cost one wrong assertion to see.
+
+## What the eight desktop features taught
+
+Issues #19–#26: the right-click menu, Sent, the unverified verify path, view
+source, export, refresh, trash, and HTML composing. Three things came out of it
+that outlive the features.
+
+### Navigating the sidebar never re-read the list
+
+`views/sidebar.ts` set `state.view` and called `changed()`. `changed()` repaints
+from `state.messageIds`, and nothing on that path refetched it. So clicking
+**Sent** drew the Sent heading, the Sent `aria-current`, and the *previous
+view's* rows. Every system tag and every user label had this. It shipped because
+`scripts/screenshots.sh` navigates by hash, and hash navigation went through
+`main.ts`'s `reload()` — so the screenshots were correct and the application was
+not.
+
+`reload()` now lives in `desktop/src/nav.ts` and is what every view switch calls.
+The rule: **change `state.view`, call `reload()`, not `changed()`.**
+
+This is the third bug of the shape the v0.3.0 section describes — a green check
+photographing a path the app does not take. It is worth saying plainly that the
+demo build is not a test of the app, only of the views.
+
+### `start_io` was never called at boot
+
+The only `start_io` in the client was in the setup form. So the scheduler ran in
+exactly one session — the one that created the account — and every launch after
+that had no IMAP loop: nothing fetched, nothing queued sent, no `IncomingMsg`
+ever emitted. The comment in `main.ts` said "new mail arrives pushed, not
+polled", which was true, and nothing was pushing.
+
+It is now called on every boot. Safe unconditionally: `Context::start_io`
+returns early on an unconfigured account and `SchedulerState::start` is a no-op
+when already started.
+
+### yerpc checks positional arity exactly, and nothing in CI notices
+
+`yerpc_derive` generates `if params.len() != n_inputs { invalid_args_len }`. A
+trailing `Option<T>` does **not** make a parameter skippable: a five-argument
+call to a six-parameter method is an error, not a `None`.
+
+So adding `html` to `send_email` was a breaking change to every caller,
+including `scripts/e2e-pass.py`, `scripts/interop-pass.py` and
+`scripts/gpg-interop-pass.py` — **none of which CI runs**, because they need
+Docker and a built `deltachat-rpc-server`. A stale positional call there is
+caught by nothing. Any future RPC signature change has to sweep those three
+scripts by hand.
+
+### A trashed message can have no purge deadline, and `purge` will never see it
+
+Found while building "empty trash". `email::ephemeral::to_trash` writes both the
+`Trash` label and a `trashed_msgs` row, but a `Trash` label replayed from
+another device arrives through `labels::sync_set` and writes only the label —
+the deadline is a local decision and is deliberately never synced. That message
+sits in the trash the user is looking at, with no `purge_at`, forever.
+
+`empty()` takes the **union** of `in_trash()` and `trashed_msgs` so the button
+empties what the user can see. That covers the symptom; it does not fix the
+gap. A message in that state is still invisible to housekeeping. Guarded by
+`ephemeral_tests::test_emptying_covers_a_trashed_message_with_no_deadline`.
+
+### Adding a contact does not release their held mail
+
+`Contact::create` reaches `add_or_lookup`, which writes the new origin with a
+direct `UPDATE` rather than through `ContactId::scaleup_origin` — and
+`scaleup_origin` is the only place carrying the `email::gating::release` hook.
+So creating a contact for a held sender makes them **trusted** by `is_trusted`
+and leaves their mail **held and invisible**, until `sweep` bins it weeks later.
+
+The client calls `release_held_contact` immediately after `create_contact`. That
+was chosen over adding a third `release` call site in `core/src/contact.rs`,
+because the RPC already re-checks trust itself and the client costs nothing on a
+future merge. Anyone adding another "add this person" path must make the same
+pair of calls.
+
+### The recipient set is not who to reply to, and Reply shipped broken
+
+`msg_recipients` stores what a message was *addressed to*, and on receive that
+is the incoming `To:` and `Cc:` headers verbatim. So on anything the user
+received, **`To` is the user's own address**. Reading a reply's addressee out of
+it addresses the reply to yourself and leaves the sender off it entirely.
+
+**That is what `reading.ts` did, and it is in `v0.3.0` and `v0.3.1`.** Reply and
+Reply all have been addressed to the user themselves for as long as the buttons
+have existed; the comment above the line said "Reply goes to whoever the message
+came from", which is what it should have done and not what it did. Moving the
+code into `actions.ts` for the context menu is what made it visible, not what
+broke it.
+
+Nothing could have caught it. The screenshots render the composer, so an empty
+or self-addressed `To` photographs the same as a correct one, and none of the
+three live passes composes a *reply* through the client -- `e2e-pass.py` calls
+`send_email` directly with addresses it chose itself. This is the fourth bug of
+the shape this document keeps describing: a green check photographing a path the
+app does not take.
+
+The sender comes from `fromId`; the recipient set is what reply-*all* adds to it,
+minus self. Replying to your own sent mail is the one case where the stored `To`
+is the right answer, because there the sender is you and what the user means is
+another message to the same people.
+
+The module header in `email/recipients.rs` says plainly what is stored and from
+where. It is worth reading before using it for anything: the set is per-message
+and *directional*, and the two directions do not mean the same thing.
+
+Self must be dropped case-insensitively, and `Cc` deduped against `To`. A reply
+that copies the user on their own reply, or names someone twice in two
+spellings, is a thread turning into duplicates.
+
+### Parsing a URL with a base turns "reject" into "silently rewrite"
+
+`richtext.ts` filters link schemes so a `javascript:` href cannot leave the
+composer. It did that with `new URL(href, "https://invalid.example")` -- a base
+supplied only so a scheme-less href would not throw. It does not throw; it
+*resolves*, so `example.com` became `https://invalid.example/example.com`: a
+link to a domain we invented, in someone's mail, looking exactly like one the
+user chose. The dangerous schemes were still blocked, so the guard looked
+correct.
+
+`safeHref` now parses with no base at all and `normalizeHref` supplies the
+scheme where the user types the address. A whitelist should reject what it does
+not recognise, never rewrite it. [ADR 0025](adr/0025-composed-html.md).
+
+### An author `display` rule silently defeats the `hidden` attribute
+
+`[hidden] { display: none }` is a *user-agent* rule, so any author rule setting
+`display` on the element beats it -- specificity does not come into it, because
+author styles outrank UA styles outright. `.toolbar { display: flex }` was one,
+so the composer rendered its formatting toolbar with `hidden` set and the
+toolbar appeared anyway, above a plain-text box its buttons could not affect.
+
+`styles.css` now carries a global `[hidden] { display: none !important; }`. The
+`!important` is the point: the fix has to survive the next `display` rule
+somebody adds, or this returns the first time a hidden element gets a flex
+layout. Of the six elements rendered with `hidden`, only `.toolbar` had a
+`display` rule, so nothing else moved -- and `composer.png` was the only
+screenshot that changed.
+
+Worth noting how it was found: `screenshots.sh` had been *comparing hashes*
+across runs and passing, because a wrongly visible toolbar is perfectly
+deterministic. Byte-stability says the UI did not change, never that it is
+right. Somebody has to look at the images.
 
 ## The four things most likely to bite you
 

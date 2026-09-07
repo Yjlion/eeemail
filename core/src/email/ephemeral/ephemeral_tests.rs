@@ -251,3 +251,97 @@ async fn test_delete_device_after_is_still_destroyed_by_core() -> Result<()> {
     assert!(msg.is_err() || msg?.get_text().is_empty());
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_emptying_the_trash_destroys_past_a_live_deadline() -> Result<()> {
+    let mut tcm = TestContextManager::new();
+    let alice = tcm.alice().await;
+    let bob = tcm.bob().await;
+    let chat = alice.create_chat(&bob).await;
+
+    set_purge_days(&alice, DEFAULT_PURGE_DAYS).await?;
+    let first = send_text_msg(&alice, chat.id, "one".to_string()).await?;
+    let second = send_text_msg(&alice, chat.id, "two".to_string()).await?;
+    trash(&alice, &[first, second]).await?;
+
+    // The deadline is a month out, so the housekeeping path correctly refuses.
+    // That refusal is what `empty` has to override, and asserting it here is
+    // what makes the next line mean anything.
+    assert_eq!(purge(&alice).await?, 0);
+    assert_eq!(in_trash(&alice).await?.len(), 2);
+
+    assert_eq!(empty(&alice).await?, 2);
+    assert!(in_trash(&alice).await?.is_empty());
+    for msg_id in [first, second] {
+        assert!(trashed(&alice, msg_id).await?.is_none());
+        let msg = Message::load_from_db(&alice, msg_id).await;
+        assert!(msg.is_err() || msg?.get_text().is_empty());
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_deleting_permanently_only_touches_the_trash() -> Result<()> {
+    let mut tcm = TestContextManager::new();
+    let alice = tcm.alice().await;
+    let bob = tcm.bob().await;
+    let chat = alice.create_chat(&bob).await;
+
+    set_purge_days(&alice, DEFAULT_PURGE_DAYS).await?;
+    let thrown = send_text_msg(&alice, chat.id, "throw away".to_string()).await?;
+    let kept = send_text_msg(&alice, chat.id, "keep".to_string()).await?;
+    trash(&alice, &[thrown]).await?;
+
+    // The safety property, and the reason `destroy_now` intersects with
+    // `trashed_msgs` rather than trusting its argument. Without that filter this
+    // is an unrestricted delete for any id a client can name, which is a much
+    // larger thing than "empty the trash".
+    assert_eq!(destroy_now(&alice, &[thrown, kept]).await?, 1);
+
+    let gone = Message::load_from_db(&alice, thrown).await;
+    assert!(gone.is_err() || gone?.get_text().is_empty());
+    assert_eq!(
+        Message::load_from_db(&alice, kept).await?.get_text(),
+        "keep",
+        "a message that was never trashed was destroyed"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_emptying_covers_a_trashed_message_with_no_deadline() -> Result<()> {
+    let mut tcm = TestContextManager::new();
+    let alice = tcm.alice().await;
+    let bob = tcm.bob().await;
+    let chat = alice.create_chat(&bob).await;
+
+    set_purge_days(&alice, DEFAULT_PURGE_DAYS).await?;
+    let msg_id = send_text_msg(&alice, chat.id, "from another device".to_string()).await?;
+
+    // The `Trash` label alone, with no `trashed_msgs` row -- which is what a
+    // label replayed from another device leaves behind, because the deadline is
+    // a local decision and is never synced. Such a message sits in the trash the
+    // user is looking at and is invisible to `purge` forever.
+    let label = labels::reserved(&alice, TRASH).await?;
+    labels::set_ext(&alice, &[msg_id], &label, true, Sync::Nosync).await?;
+    assert!(trashed(&alice, msg_id).await?.is_none());
+    assert_eq!(in_trash(&alice).await?, vec![msg_id]);
+
+    SystemTime::shift(std::time::Duration::from_secs(
+        (DEFAULT_PURGE_DAYS as u64 + 1) * 86_400,
+    ));
+    assert_eq!(purge(&alice).await?, 0, "purge should never see this one");
+
+    assert_eq!(empty(&alice).await?, 1);
+    assert!(in_trash(&alice).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_emptying_an_empty_trash_is_zero() -> Result<()> {
+    let mut tcm = TestContextManager::new();
+    let alice = tcm.alice().await;
+    assert_eq!(empty(&alice).await?, 0);
+    assert_eq!(destroy_now(&alice, &[]).await?, 0);
+    Ok(())
+}

@@ -89,11 +89,7 @@ async fn stage_attachment(name: String, bytes: Vec<u8>) -> Result<String, String
         .await
         .map_err(|err| format!("cannot create {}: {err}", dir.display()))?;
 
-    let safe = std::path::Path::new(&name)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .filter(|n| !n.is_empty() && n != "." && n != "..")
-        .unwrap_or_else(|| "attachment".to_string());
+    let safe = safe_file_name(&name, "attachment");
     // Prefixed with a nanosecond timestamp so two files with the same name in
     // one session do not overwrite each other mid-compose.
     let stamp = std::time::SystemTime::now()
@@ -106,6 +102,73 @@ async fn stage_attachment(name: String, bytes: Vec<u8>) -> Result<String, String
         .await
         .map_err(|err| format!("cannot write {}: {err}", path.display()))?;
     Ok(path.to_string_lossy().to_string())
+}
+
+/// Writes a message out as a file the user picks, and returns where it went.
+///
+/// The mirror of [`stage_attachment`]: the renderer cannot touch the
+/// filesystem, so the bytes cross the IPC boundary once and the shell writes
+/// them. It matters more in this direction, because the local database *is* the
+/// mailbox -- mail is removed from the server -- so an export is how a message
+/// comes to exist anywhere else.
+///
+/// `Ok(None)` means the user cancelled the dialog. That is not an error and the
+/// UI must not report one.
+///
+/// A save dialog rather than a fixed directory: an export is a thing the user
+/// is deciding to keep, and deciding where is part of that. The dialog is
+/// opened from Rust, so `tauri-plugin-dialog` needs no ACL entry -- the ACL
+/// governs what the *frontend* may invoke.
+#[tauri::command]
+async fn export_message(
+    app: tauri::AppHandle,
+    name: String,
+    bytes: Vec<u8>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt as _;
+
+    // The suggested name comes from a `Subject:`, which is attacker-controlled
+    // on every received message. Reduced to a last component before it reaches
+    // a dialog that would happily accept a path.
+    let safe = safe_file_name(&name, "message.eml");
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_file_name(&safe)
+        .add_filter("Email message", &["eml"])
+        .save_file(move |path| {
+            let _ = tx.send(path);
+        });
+    let Ok(Some(path)) = rx.await else {
+        // Either the user cancelled, or the dialog closed without answering.
+        // Both mean nothing was written.
+        return Ok(None);
+    };
+    let path = path
+        .into_path()
+        .map_err(|err| format!("cannot resolve the chosen path: {err}"))?;
+
+    tokio::fs::write(&path, &bytes)
+        .await
+        .map_err(|err| format!("cannot write {}: {err}", path.display()))?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
+/// Reduces a caller-supplied file name to something safe to join onto a
+/// directory.
+///
+/// Shared by [`stage_attachment`] and [`export_message`] so there is one rule
+/// and one set of tests. Both names are attacker-influenced -- an attachment
+/// name when the user forwards something, an export name derived from a
+/// `Subject:` -- and `../` in either would write outside the directory that was
+/// chosen.
+fn safe_file_name(name: &str, default: &str) -> String {
+    Path::new(name)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .filter(|n| !n.is_empty() && n != "." && n != "..")
+        .unwrap_or_else(|| default.to_string())
 }
 
 /// Whether the first-launch disclosure still has to be shown.
@@ -207,6 +270,10 @@ async fn run() -> Result<()> {
 
     tauri::Builder::default()
         .manage(state)
+        // Registered for `export_message`'s save dialog, which is opened from
+        // Rust. `DialogExt` resolves managed state, so it panics rather than
+        // errors without this.
+        .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             let handle = app.handle().clone();
             // Everything the engine has to say -- responses, new mail, delivery
@@ -229,6 +296,7 @@ async fn run() -> Result<()> {
         .invoke_handler(tauri::generate_handler![
             rpc_send,
             stage_attachment,
+            export_message,
             first_run_pending,
             acknowledge_first_run
         ])
@@ -351,6 +419,62 @@ fn first_run_marker() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Neither of the two names that reach [`safe_file_name`] is ours.
+    ///
+    /// An attachment name comes from a message the user is forwarding; an
+    /// export name is derived from a `Subject:`, which is attacker-controlled
+    /// on everything received. Both are joined onto a directory afterwards, so
+    /// a `../` that survives writes outside it. The rule is shared by the two
+    /// commands precisely so it cannot be got right in one and skipped in the
+    /// other.
+    #[test]
+    fn test_an_export_name_cannot_escape_its_directory() {
+        assert_eq!(safe_file_name("../../etc/passwd", "message.eml"), "passwd");
+        assert_eq!(safe_file_name("/etc/shadow", "message.eml"), "shadow");
+        assert_eq!(safe_file_name("a/b/c.eml", "message.eml"), "c.eml");
+        // Windows separators, because the shell runs there too and `Path` on
+        // Linux does not treat a backslash as one. This is the case that is
+        // wrong on exactly one platform, which is how `accounts_dir` shipped
+        // broken for eight releases.
+        assert_eq!(
+            safe_file_name("..\\..\\windows\\system32", "message.eml"),
+            sanitized_windows_name()
+        );
+    }
+
+    /// What the Windows-separator case is allowed to produce.
+    ///
+    /// `Path::file_name` splits on backslashes on Windows and not on Linux, so
+    /// the two platforms legitimately disagree. Either answer is safe -- both
+    /// are a single component that cannot traverse -- and pinning the actual
+    /// values is what would make this test a lie on one of them.
+    fn sanitized_windows_name() -> &'static str {
+        if cfg!(windows) {
+            "system32"
+        } else {
+            "..\\..\\windows\\system32"
+        }
+    }
+
+    #[test]
+    fn test_a_useless_name_becomes_the_default() {
+        assert_eq!(safe_file_name("", "message.eml"), "message.eml");
+        assert_eq!(safe_file_name(".", "message.eml"), "message.eml");
+        assert_eq!(safe_file_name("..", "message.eml"), "message.eml");
+        assert_eq!(safe_file_name("/", "message.eml"), "message.eml");
+        // The two commands pass different defaults, and each gets its own.
+        assert_eq!(safe_file_name("", "attachment"), "attachment");
+    }
+
+    #[test]
+    fn test_an_ordinary_name_is_left_alone() {
+        assert_eq!(
+            safe_file_name("Thursday's numbers.eml", "x"),
+            "Thursday's numbers.eml"
+        );
+        assert_eq!(safe_file_name("note.txt", "x"), "note.txt");
+    }
 
     /// The bug that made v0.3.0 unusable, asserted directly.
     ///
