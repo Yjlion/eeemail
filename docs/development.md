@@ -19,6 +19,19 @@ No system OpenSSL or SQLite is needed: `core`'s default `vendored` feature
 builds SQLCipher and OpenSSL from source. The first build is slow (10-20
 minutes) and pulls a large dependency tree.
 
+If you use the **`gh` CLI**, run this once in a fresh clone:
+
+```sh
+gh repo set-default Yjlion/eeemail
+```
+
+`gh` prefers a remote named `upstream`, and ours points at `chatmail/core` -- so
+until you do, every `gh` command reads and writes *Delta Chat's* repository, and
+`gh pr create` fails with `No commits between main and <branch>` rather than
+saying so. The setting lives in `.git/config`, so it is per-clone and cannot be
+committed. Leave the `upstream` remote alone; it is what upstream merges are
+fetched from.
+
 ## Layout
 
 `core/` is a `git subtree` fork of [`chatmail/core`](https://github.com/chatmail/core)

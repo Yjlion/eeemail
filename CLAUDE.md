@@ -74,6 +74,30 @@ ledger fails the build; the ledger is what makes the next upstream merge
 possible. Read [`docs/development.md`](docs/development.md) before touching
 `core/`.
 
+### `gh` points at Delta Chat unless you tell it not to
+
+This clone has two remotes: `origin` is `Yjlion/eeemail`, `upstream` is
+`chatmail/core`. **`gh` prefers a remote named `upstream`**, so in a fresh clone
+every `gh` command resolves to Delta Chat's repository rather than ours.
+`gh repo view` reports `chatmail/core`, and `gh pr create` tries to open a pull
+request *against Delta Chat* -- which fails with `No commits between main and
+<branch>`, a message that says nothing about the actual problem.
+
+One command, once per clone:
+
+```sh
+gh repo set-default Yjlion/eeemail
+```
+
+It writes `remote.origin.gh-resolved = base` into `.git/config`, which is
+per-clone and **not** committed -- so this is not something the repository can
+fix for you, and a new checkout needs it again. Until you run it, pass
+`--repo Yjlion/eeemail` to every `gh` command.
+
+Do not fix this by renaming or deleting the `upstream` remote. It is what the
+next merge from `chatmail/core` is fetched from, and the fork-patch ledger
+exists to make that merge possible.
+
 ## Decisions and documents
 
 - **ADRs are immutable.** To change one, add a new ADR that supersedes it, or a
