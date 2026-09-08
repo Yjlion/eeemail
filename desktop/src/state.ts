@@ -6,7 +6,7 @@
  * fields would be more code than the fields.
  */
 
-import type { Label, SystemTag } from "./types";
+import type { Account, Label, SystemTag } from "./types";
 
 /** Which list the middle pane is showing. */
 export type View =
@@ -15,10 +15,33 @@ export type View =
   | { kind: "search"; query: string };
 
 /** Which full-pane screen is up, if any. `null` means the normal three panes. */
-export type Screen = "setup" | "composer" | "contacts" | "settings" | null;
+export type Screen =
+  | "setup"
+  | "composer"
+  | "contacts"
+  | "settings"
+  | "tags"
+  | null;
 
 export const state = {
   accountId: 0,
+  /**
+   * Every profile the engine knows about, configured or not.
+   *
+   * Held here rather than fetched per render because the sidebar draws it on
+   * every repaint, and because `accountId` is only meaningful against a list
+   * that agrees with it.
+   */
+  accounts: [] as Account[],
+  /**
+   * Which account the setup form is configuring, or `null` to create one.
+   *
+   * This exists because the form used to read `state.accountId` directly, which
+   * meant "add another account" would have reconfigured the account already
+   * open. `null` is the request to make a new one; a number is a setup being
+   * resumed.
+   */
+  setupAccountId: null as number | null,
   labels: [] as Label[],
   view: { kind: "tag", tag: "inbox" } as View,
   screen: null as Screen,
@@ -34,6 +57,8 @@ export const state = {
     /** The formatted body, when the draft came from formatted mode. */
     html: string | null;
   },
+  /** Which contact the contacts screen has open, if any. */
+  selectedContactId: null as number | null,
   /** How many messages are waiting in the unverified view, for the sidebar badge. */
   unverifiedCount: 0,
   /** A check for new mail is in flight, so the refresh control is busy. */
@@ -62,7 +87,8 @@ export function changed(): void {
 /**
  * Reads the view out of `location.hash`.
  *
- * `#/tag/inbox`, `#/tag/inbox/101`, `#/label/10`, `#/screen/composer`.
+ * `#/tag/inbox`, `#/tag/inbox/101`, `#/label/10`, `#/screen/composer`,
+ * `#/screen/contacts/7`.
  *
  * `#/first-run` is deliberately not one of them: it changes no state, so it
  * falls through to the default view and the disclosure dialog opens over it.
@@ -78,6 +104,10 @@ export function applyHash(): boolean {
 
   if (parts[0] === "screen" && parts[1]) {
     state.screen = parts[1] as Screen;
+    // `#/screen/contacts/7` selects a contact, which is the only screen with
+    // anything to select. Written here rather than in the view so a deep link
+    // resolves before the first paint rather than after it.
+    state.selectedContactId = parts[2] ? Number(parts[2]) : null;
     return true;
   }
   if (parts[0] === "tag" && parts[1]) {

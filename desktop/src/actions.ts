@@ -55,6 +55,8 @@ export function itemsFor(target: Target): MenuItem[] {
   }
 
   items.push(null);
+  items.push({ label: "Tags…", act: "tags" });
+  items.push(null);
   items.push({
     label: "View source",
     act: "view-source",
@@ -112,6 +114,13 @@ export async function run(act: string, msgId: number): Promise<boolean> {
       if (!ok) return false;
       await rpc.call("delete_trashed_messages", [account, [msgId]]);
       return true;
+    }
+
+    case "tags": {
+      const { showTagPicker } = await import("./views/tagpicker");
+      // A tag change can move the message out of the view listing it, so the
+      // list is re-read only when something was actually applied or removed.
+      return await showTagPicker(msgId);
     }
 
     case "add-contact":

@@ -73,6 +73,10 @@ shoot trash          "#/tag/trash/109"
 shoot trash-swept    "#/tag/trash/111"
 shoot composer       "#/screen/composer"
 shoot contacts       "#/screen/contacts"
+# The address book with a record open. The list on its own says nothing about
+# what selecting somebody shows, which is most of what this screen now is.
+shoot contact-detail "#/screen/contacts/20"
+shoot tags           "#/screen/tags"
 shoot settings       "#/screen/settings"
 # The first-launch disclosure, over the inbox it opens in front of. A route
 # rather than a screen: it changes no state, so it falls through to the default

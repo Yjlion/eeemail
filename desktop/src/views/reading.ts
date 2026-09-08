@@ -140,7 +140,15 @@ export async function renderReading(el: HTMLElement): Promise<void> {
     // shown as a positive claim about identity.
     crypto.verified ? `<span class="badge verified">verified contact</span>` : "",
     ...tags.system.map((t) => `<span class="badge">${TAG_LABELS[t]}</span>`),
-    ...tags.user.map((l) => `<span class="badge">${escapeHtml(l.name)}</span>`),
+    // The user's own tags carry their colour as a dot rather than as the badge
+    // background: a user-chosen colour behind text has no contrast guarantee,
+    // and these sit beside badges whose colour already means something.
+    ...tags.user.map(
+      (l) =>
+        `<span class="badge">${
+          l.color ? `<span class="dot" style="background:${escapeHtml(l.color)}"></span>` : ""
+        }${escapeHtml(l.name)}</span>`,
+    ),
   ]
     .filter(Boolean)
     .join(" ");

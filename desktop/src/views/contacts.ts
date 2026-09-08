@@ -1,22 +1,62 @@
 /**
- * Contacts, verification and QR.
+ * The address book: everyone this mailbox knows, and who they are.
  *
- * Contacts are not an address book here, they are where the keys live. A
- * contact's verification state is the only claim this client makes about
- * identity that survives an active attacker, so it is the one thing the list
- * shows before anything else.
+ * Contacts are still where the keys live -- a contact's verification state is
+ * the only claim this client makes about identity that survives an active
+ * attacker, so it stays the first thing every row shows. What changed is that
+ * this is now also an address book: a list you can search, and a record you can
+ * open and edit, rather than two `filter()`ed dumps under a QR code.
+ *
+ * Master and detail in one screen. The list is the master; selecting a row
+ * opens the detail beside it, and `#/screen/contacts/<id>` selects one directly
+ * so a record can be linked to and photographed.
+ *
+ * The QR block is still here and is now collapsed. It was taking the top of the
+ * screen from the list, which is what someone opening "Contacts" came for.
+ *
+ * See `docs/adr/0028-contacts-are-an-address-book.md`.
  */
 
 import { rpc } from "../client";
 import { state, changed } from "../state";
 import { escapeHtml } from "../html";
+import { when } from "./list";
 import type { Contact } from "../types";
+
+/**
+ * `DC_GCL_ADDRESS`: include address-contacts, not only key-contacts.
+ *
+ * Without it `get_contacts` returns key-contacts alone, so the half of the
+ * address book that has only ever been written to is invisible. This is the
+ * closest the upstream call gets to "everyone"; `search_contacts` replaces it.
+ */
+const GCL_ADDRESS = 0x400;
 
 let contacts: Contact[] = [];
 let qrSvg: string | null = null;
+let query = "";
+
+/**
+ * Drops what belongs to the account that was open.
+ *
+ * These are module-level and so survive an account switch untouched by anything
+ * that only clears `state`. Called by `accounts.ts`; nothing else should need
+ * it, and nothing else should hold per-account data out here.
+ */
+export function resetContactsCache(): void {
+  contacts = [];
+  qrSvg = null;
+  query = "";
+}
 
 async function load(): Promise<void> {
-  contacts = (await rpc.call("get_contacts", [state.accountId, 0, null])) as Contact[];
+  // The third parameter is a substring filter the engine applies itself, and
+  // it was hardcoded `null` for as long as this screen has existed.
+  contacts = (await rpc.call("get_contacts", [
+    state.accountId,
+    GCL_ADDRESS,
+    query.trim() || null,
+  ])) as Contact[];
   if (qrSvg === null) {
     try {
       const code = (await rpc.call("get_chat_securejoin_qr_code", [
@@ -32,26 +72,62 @@ async function load(): Promise<void> {
   }
 }
 
-export async function renderContacts(el: HTMLElement): Promise<void> {
-  await load();
-  const verified = contacts.filter((c) => c.isVerified);
-  const rest = contacts.filter((c) => !c.isVerified);
+function selected(): Contact | null {
+  if (state.selectedContactId === null) return null;
+  return contacts.find((c) => c.id === state.selectedContactId) ?? null;
+}
 
-  const row = (c: Contact) => `
-    <div class="contact" data-contact-id="${c.id}">
-      <div>
-        <div class="name">${escapeHtml(c.displayName || c.address)}</div>
-        <div class="addr">${escapeHtml(c.address)}</div>
-      </div>
-      <div class="contact-actions">
+function detail(c: Contact): string {
+  const seen = c.lastSeen > 0 ? when(c.lastSeen) : "never";
+  return `
+    <div class="contact-detail" data-contact-id="${c.id}">
+      <h2 class="who">${escapeHtml(c.displayName || c.address)}</h2>
+      <div class="badge-row">
         ${
           c.isVerified
             ? `<span class="badge verified">verified</span>`
             : `<span class="badge plain">unverified</span>`
         }
-        <button data-act="release" data-contact-id="${c.id}">Release held mail</button>
+        ${c.e2eeAvail ? `<span class="badge enc">key held</span>` : ""}
+        ${c.isBlocked ? `<span class="badge">blocked</span>` : ""}
       </div>
+
+      <dl class="facts">
+        <dt>Address</dt><dd>${escapeHtml(c.address)}</dd>
+        <dt>Last seen</dt><dd>${escapeHtml(seen)}</dd>
+      </dl>
+
+      <form class="inline-form" id="rename-contact">
+        <label>Name <input name="name" value="${escapeHtml(c.name ?? c.displayName)}" autocomplete="off" /></label>
+        <button type="submit">Save</button>
+      </form>
+
+      <div class="contact-actions">
+        <button data-act="release">Release held mail</button>
+        <button data-act="encryption-info">Encryption details</button>
+        <button data-act="delete" class="danger">Delete contact</button>
+      </div>
+      <pre class="source" id="encryption-info" hidden></pre>
     </div>`;
+}
+
+export async function renderContacts(el: HTMLElement): Promise<void> {
+  await load();
+
+  const row = (c: Contact) => `
+    <button class="contact" data-contact-id="${c.id}"
+            aria-current="${c.id === state.selectedContactId ? "true" : "false"}">
+      <span class="contact-who">
+        <span class="name">${escapeHtml(c.displayName || c.address)}</span>
+        <span class="addr">${escapeHtml(c.address)}</span>
+      </span>
+      <span class="contact-marks">
+        ${c.isVerified ? `<span class="badge verified">verified</span>` : ""}
+        ${c.isBlocked ? `<span class="badge">blocked</span>` : ""}
+      </span>
+    </button>`;
+
+  const current = selected();
 
   el.innerHTML = `
     <div class="contacts">
@@ -63,8 +139,34 @@ export async function renderContacts(el: HTMLElement): Promise<void> {
         was learned from mail they sent, which is worth having and is not proof.
       </p>
 
-      <section class="qr-block">
-        <h2 class="section">Your invite code</h2>
+      <div class="contacts-body">
+        <div class="contacts-list">
+          <input id="contact-search" type="search" placeholder="Search contacts"
+                 value="${escapeHtml(query)}" autocomplete="off" aria-label="Search contacts" />
+          <div class="contact-rows">
+            ${
+              contacts.length
+                ? contacts.map(row).join("")
+                : `<div class="empty small">${
+                    query.trim() ? "Nobody matches that." : "Nobody yet"
+                  }</div>`
+            }
+          </div>
+          <form id="add-contact" class="add-contact">
+            <h2 class="section">Add a contact</h2>
+            <label>Name <input name="name" autocomplete="off" /></label>
+            <label>Address <input name="addr" type="email" required autocomplete="off" /></label>
+            <button type="submit">Add</button>
+          </form>
+        </div>
+
+        <div class="contacts-detail">
+          ${current ? detail(current) : `<div class="empty small">Pick somebody to see their details.</div>`}
+        </div>
+      </div>
+
+      <details class="qr-block">
+        <summary>Your invite code</summary>
         <p class="hint">
           Have them scan this, or scan theirs. Either direction verifies both of
           you.
@@ -82,19 +184,8 @@ export async function renderContacts(el: HTMLElement): Promise<void> {
           silently does nothing on another is worse than no button. Paste or use
           another device meanwhile.
         </p>
-      </section>
+      </details>
 
-      <h2 class="section">Verified (${verified.length})</h2>
-      ${verified.length ? verified.map(row).join("") : `<div class="empty small">Nobody yet</div>`}
-      <h2 class="section">Everyone else (${rest.length})</h2>
-      ${rest.length ? rest.map(row).join("") : `<div class="empty small">Nobody yet</div>`}
-
-      <form id="add-contact" class="add-contact">
-        <h2 class="section">Add a contact</h2>
-        <label>Name <input name="name" autocomplete="off" /></label>
-        <label>Address <input name="addr" type="email" required autocomplete="off" /></label>
-        <button type="submit">Add</button>
-      </form>
       <div class="error" id="contacts-error" hidden></div>
     </div>
   `;
@@ -102,8 +193,39 @@ export async function renderContacts(el: HTMLElement): Promise<void> {
   const error = el.querySelector<HTMLElement>("#contacts-error")!;
   const fail = (err: unknown) => {
     error.hidden = false;
+    error.className = "error";
     error.textContent = err instanceof Error ? err.message : String(err);
   };
+  const note = (text: string) => {
+    error.hidden = false;
+    error.className = "notice";
+    error.textContent = text;
+  };
+
+  // Debounced for the same reason the message search is: the query is a `LIKE`
+  // over the contact table, and a keystroke is not a question.
+  const search = el.querySelector<HTMLInputElement>("#contact-search")!;
+  let timer: number | undefined;
+  search.addEventListener("input", () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      query = search.value;
+      void renderContacts(el).then(() => {
+        // Re-rendering replaces the input, so focus and caret have to be put
+        // back or typing the second character lands nowhere.
+        const next = el.querySelector<HTMLInputElement>("#contact-search");
+        next?.focus();
+        next?.setSelectionRange(next.value.length, next.value.length);
+      });
+    }, 200);
+  });
+
+  for (const button of el.querySelectorAll<HTMLButtonElement>("button.contact")) {
+    button.addEventListener("click", () => {
+      state.selectedContactId = Number(button.dataset["contactId"]);
+      void renderContacts(el);
+    });
+  }
 
   el.querySelector<HTMLFormElement>("#scan-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -129,35 +251,100 @@ export async function renderContacts(el: HTMLElement): Promise<void> {
     }
   });
 
-  for (const button of el.querySelectorAll<HTMLButtonElement>("button[data-act='release']")) {
-    button.addEventListener("click", async () => {
+  el.querySelector<HTMLFormElement>("#rename-contact")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!current) return;
+    const form = event.target as HTMLFormElement;
+    try {
+      await rpc.call("change_contact_name", [
+        state.accountId,
+        current.id,
+        (form.elements.namedItem("name") as HTMLInputElement).value.trim(),
+      ]);
+      await renderContacts(el);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+  const detailEl = el.querySelector<HTMLElement>(".contact-detail");
+  detailEl?.querySelector<HTMLButtonElement>("[data-act='release']")?.addEventListener(
+    "click",
+    async () => {
+      if (!current) return;
       try {
         const released = (await rpc.call("release_held_contact", [
           state.accountId,
-          Number(button.dataset["contactId"]),
+          current.id,
         ])) as number;
-        error.hidden = false;
-        error.className = "notice";
-        error.textContent =
+        note(
           released > 0
             ? `Released ${released} message(s) into the inbox.`
-            : `Nothing released: this contact is still neither verified nor in your address book. Accept a message from them, or write to them.`;
+            : `Nothing released: this contact is still neither verified nor in your address book. Accept a message from them, or write to them.`,
+        );
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
+
+  detailEl
+    ?.querySelector<HTMLButtonElement>("[data-act='encryption-info']")
+    ?.addEventListener("click", async () => {
+      if (!current) return;
+      const target = detailEl.querySelector<HTMLElement>("#encryption-info")!;
+      try {
+        target.textContent = (await rpc.call("get_contact_encryption_info", [
+          state.accountId,
+          current.id,
+        ])) as string;
+        target.hidden = false;
       } catch (err) {
         fail(err);
       }
     });
-  }
+
+  detailEl?.querySelector<HTMLButtonElement>("[data-act='delete']")?.addEventListener(
+    "click",
+    async () => {
+      if (!current) return;
+      if (
+        !window.confirm(
+          `Delete ${current.displayName || current.address}?\n\n` +
+            "Their mail stays. What is removed is the record -- including any " +
+            "key held for them, so the next message to them may go out in " +
+            "cleartext.",
+        )
+      ) {
+        return;
+      }
+      try {
+        await rpc.call("delete_contact", [state.accountId, current.id]);
+        state.selectedContactId = null;
+        await renderContacts(el);
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
 
   el.querySelector<HTMLFormElement>("#add-contact")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     error.hidden = true;
     const form = event.target as HTMLFormElement;
     try {
-      await rpc.call("create_contact", [
+      const id = (await rpc.call("create_contact", [
         state.accountId,
         (form.elements.namedItem("addr") as HTMLInputElement).value.trim(),
         (form.elements.namedItem("name") as HTMLInputElement).value.trim() || null,
-      ]);
+      ])) as number;
+      // Creating a contact makes the sender trusted without releasing the mail
+      // already held from them: `Contact::create` writes the new origin with a
+      // direct UPDATE rather than through `scaleup_origin`, which is the only
+      // place carrying the release hook. So the pair of calls is the feature,
+      // and anyone adding a third "add this person" path owes both.
+      await rpc.call("release_held_contact", [state.accountId, id]);
+      state.selectedContactId = id;
       await renderContacts(el);
     } catch (err) {
       fail(err);
