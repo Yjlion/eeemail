@@ -1102,6 +1102,16 @@ impl MimeMessage {
             .map(|s| s.as_str())
     }
 
+    /// eeemail: a header by its raw name, which must be lowercase.
+    ///
+    /// `get_header` takes a [`HeaderDef`], so reading a header upstream has no
+    /// variant for would mean adding one to an upstream enum -- a patch per
+    /// header, forever. `merge_headers` already lowercases every key into the
+    /// same map this reads, so nothing else is needed to get at them.
+    pub(crate) fn get_header_raw(&self, lowercase_name: &str) -> Option<&str> {
+        self.headers.get(lowercase_name).map(|s| s.as_str())
+    }
+
     #[cfg(test)]
     /// Returns whether the header exists in any part of the parsed message.
     ///

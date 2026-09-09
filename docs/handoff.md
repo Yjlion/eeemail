@@ -1,9 +1,105 @@
 # Handoff — Phases 10–14b, the first live pass, and v0.3.0
 
-**Written 2026-09-01, updated 2026-09-06.** Branch `main`; `v0.3.0` is tagged
+**Written 2026-09-01, updated 2026-09-09.** Branch `main`; `v0.3.0` is tagged
 and published, **and does not work** — see immediately below. The eight desktop
 issues #19–#26 landed after that; what they taught is in
 [what the eight desktop features taught](#what-the-eight-desktop-features-taught).
+Seven more features landed on `seven-features` after *that*; what they taught is
+in [what the seven features taught](#what-the-seven-features-taught).
+
+## The seven features
+
+Multiple accounts, an email signature, message importance, a searchable address
+book with records and categories, a blocklist that actually rejects mail, and
+user-created tags with colours. Four ADRs — [0026](adr/0026-several-accounts-in-one-window.md),
+[0027](adr/0027-a-blocklist-that-trashes-on-arrival.md),
+[0028](adr/0028-contacts-are-an-address-book.md),
+[0029](adr/0029-importance-travels-on-the-wire.md) — and three migrations, 172
+to 174.
+
+**Three of the seven needed no engine work at all.** Labels have carried a
+colour since migration 166 and `create_label` has always taken one; the client
+called exactly one of the eight label methods. `Accounts::select_account` and
+the rest have existed since before this client did; `main.ts` did
+`state.accountId = ids[0]` once, at boot. `get_contacts`' third parameter is a
+server-side substring filter that was hardcoded `null`. Before designing
+anything here, it is worth checking whether the engine already does it —
+roughly half of this work was UI for machinery that was already present.
+
+## What the seven features taught
+
+### `Contact::block` does not block mail, and the name says it does
+
+Core sets `contacts.blocked`, and `receive_imf` computes `from_id_blocked` and
+then **discards it**. A blocked sender's mail is fetched, decrypted, stored and
+marked read. For a messenger that is the contact-request feature; for a mail
+client it is a promise the user can watch being broken. `email::blocklist` is
+what actually rejects, and `block_sender` writes both halves so no caller can
+do one.
+
+### The same trap, in the other direction, found by re-reading the diff
+
+`blocklist::remove` deleted the pattern and left `contacts.blocked` set. The
+contact stayed hidden from `get_contacts` and filtered out of search while
+their mail started arriving again — a half-undone block, which is exactly what
+`block_sender` exists to prevent. Nothing failed; the tests passed; it was
+found by reading the diff before committing. **Pairs of writes that must move
+together want one function, and the undo path is a pair too.**
+
+### A matching rule with two implementations will eventually have two answers
+
+`blocklist::matches` is SQL, for speed on every incoming message;
+`pattern_covers` is Rust, for the removal path. They express one rule.
+`test_the_query_and_the_predicate_agree` pins them together over the cases that
+distinguish them, which is the same medicine `gating::same_person` needed after
+the two copies of *that* rule drifted apart in production.
+
+### `git add -A` swept two unfinished files into a commit
+
+The chunk-2 commit briefly contained the chunk-3 module, which its message said
+nothing about. Inert — the module was not yet in `mod.rs`, so nothing compiled
+it — and still a commit that lied about its contents. Reset, restaged, recommitted.
+
+### Asserting on `payload()` is asserting on quoted-printable
+
+The RFC 3676 separator goes out as `--=20`, `class="x"` as `class=3D"x"`, and
+long lines carry soft breaks. Three signature assertions failed against a
+perfectly correct implementation. `signature_tests::readable` undoes the three
+for substring checks and says in its own doc comment that it is not a decoder.
+
+### A bare `TestContext` refuses cleartext in both directions
+
+It carries upstream's strict `ForceEncryption`, not eeemail's opportunistic
+default. A send test fails with `e2e encryption unavailable`; a receive test
+never reaches the module under test, because `receive_imf` drops the message
+with "Fetched unencrypted message, ignoring". Sending tests want
+`EncryptionMode::set(.., Opportunistic)`, receiving tests want
+`t.allow_unencrypted()`.
+
+### `send_email` grew a seventh parameter, and nothing in CI would have caught it
+
+`yerpc` compares positional arity with `!=`, so a six-argument call to the
+seven-parameter method is `invalid params`, not a `None`. Eight call sites
+across `scripts/e2e-pass.py`, `scripts/interop-pass.py` and
+`scripts/gpg-interop-pass.py` — **none of which any CI job runs.** They were
+swept by hand in the same change. The ledger and the method's doc comment both
+say so now; the next signature change owes the same sweep.
+
+### Reading a header did not need a `HeaderDef` variant
+
+The plan was to add one to an upstream enum, which is a patch per header
+forever. `merge_headers` already lowercases every header into a `HashMap` that
+`get_header` reads by name, so a four-line `get_header_raw` reads any of them.
+The patch shrank from an enum variant plus a `MimeMessage` field plus a merge
+change to one method.
+
+### The build cannot be run in the foreground here
+
+`cargo nextest run --workspace` needs longer than the ten-minute per-command
+cap, and a `timeout` above that is silently clamped rather than honoured. The
+result is exit 137 with no output at all, which looks exactly like a crash and
+is not one — it cost two wrong diagnoses (OOM, then reduced parallelism) before
+the cause was checked rather than guessed. **Run cargo in the background.**
 
 ## v0.3.1 — what installing v0.3.0 found
 
@@ -302,8 +398,9 @@ cd ../.. && cargo build -p deltachat-rpc-server
 python3 scripts/e2e-pass.py
 ```
 
-The six steps are in [`DESIGN.md`](DESIGN.md#verification), which is where
-this document used to claim they were and where they now actually are.
+The steps are in [`DESIGN.md`](DESIGN.md#verification), which is where
+this document used to claim they were and where they now actually are. There
+were six; the seven features added three more, so the list is the count.
 
 ### What it found
 

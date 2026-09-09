@@ -39,6 +39,8 @@ Testing: [`../testing.md`](../testing.md)
 | [0025](0025-composed-html.md) | Composed HTML is a whitelisted alternative, never a replacement | Accepted |
 | [0026](0026-several-accounts-in-one-window.md) | Several accounts in one window, all of them fetching | Accepted |
 | [0027](0027-a-blocklist-that-trashes-on-arrival.md) | A blocked sender's mail is trashed on arrival, recoverably | Accepted |
+| [0028](0028-contacts-are-an-address-book.md) | Contacts are an address book, with records and categories of their own | Accepted |
+| [0029](0029-importance-travels-on-the-wire.md) | Importance is sent and read as mail headers, and absent when normal | Accepted |
 
 ## Deferred
 

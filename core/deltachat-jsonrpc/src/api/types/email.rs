@@ -6,6 +6,7 @@
 //! to one `impl` block; keeping the types out here holds the upstream diff to
 //! thin wrappers. See `docs/fork-patches.md`.
 
+use deltachat::email::addressbook::{Category, Details, Phone};
 use deltachat::email::blocklist::Entry as BlocklistEntry;
 use deltachat::email::ephemeral::{Reason, Trashed};
 use deltachat::email::labels::Label;
@@ -83,6 +84,98 @@ impl From<Label> for JsonrpcLabel {
             name: l.name,
             color: l.color.map(super::color_int_to_hex_string),
             is_system: l.is_system,
+        }
+    }
+}
+
+/// One phone number on a contact record.
+#[derive(Serialize, Deserialize, TypeDef, schemars::JsonSchema)]
+#[serde(rename = "ContactPhone", rename_all = "camelCase")]
+pub struct JsonrpcPhone {
+    /// "work", "mobile" -- free text, because the useful set is per person.
+    pub label: String,
+    /// Exactly as the user typed it. Formatting a number is how you break it.
+    pub number: String,
+}
+
+impl From<Phone> for JsonrpcPhone {
+    fn from(p: Phone) -> Self {
+        Self {
+            label: p.label,
+            number: p.number,
+        }
+    }
+}
+
+impl From<JsonrpcPhone> for Phone {
+    fn from(p: JsonrpcPhone) -> Self {
+        Self {
+            label: p.label,
+            number: p.number,
+        }
+    }
+}
+
+/// What the address book knows about somebody, beyond their contact row.
+///
+/// Deserialisable as well as serialisable: the whole record is written back at
+/// once, because a field-at-a-time API cannot distinguish "clear this" from
+/// "leave it alone".
+#[derive(Serialize, Deserialize, TypeDef, schemars::JsonSchema)]
+#[serde(rename = "ContactDetails", rename_all = "camelCase")]
+pub struct JsonrpcContactDetails {
+    pub organisation: String,
+    pub job_title: String,
+    pub postal: String,
+    pub website: String,
+    pub notes: String,
+    pub phones: Vec<JsonrpcPhone>,
+}
+
+impl From<Details> for JsonrpcContactDetails {
+    fn from(d: Details) -> Self {
+        Self {
+            organisation: d.organisation,
+            job_title: d.job_title,
+            postal: d.postal,
+            website: d.website,
+            notes: d.notes,
+            phones: d.phones.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<JsonrpcContactDetails> for Details {
+    fn from(d: JsonrpcContactDetails) -> Self {
+        Self {
+            organisation: d.organisation,
+            job_title: d.job_title,
+            postal: d.postal,
+            website: d.website,
+            notes: d.notes,
+            phones: d.phones.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// A user-defined grouping of contacts.
+#[derive(Serialize, TypeDef, schemars::JsonSchema)]
+#[serde(rename = "ContactCategory", rename_all = "camelCase")]
+pub struct JsonrpcContactCategory {
+    /// Local row id. Categories are not synced, so this is the only name for one.
+    pub id: i64,
+    /// As the user typed it.
+    pub name: String,
+    /// `#rrggbb`, or `null` if no colour was chosen.
+    pub color: Option<String>,
+}
+
+impl From<Category> for JsonrpcContactCategory {
+    fn from(c: Category) -> Self {
+        Self {
+            id: c.id,
+            name: c.name,
+            color: c.color.map(super::color_int_to_hex_string),
         }
     }
 }
@@ -531,6 +624,8 @@ pub struct JsonrpcMessageRow {
     pub verified: bool,
     /// Carries a file.
     pub has_attachment: bool,
+    /// `"high"`, `"normal"` or `"low"`, as the sender marked it.
+    pub importance: String,
     /// System tags on the message, in sidebar order.
     pub tags: Vec<JsonrpcSystemTag>,
 }

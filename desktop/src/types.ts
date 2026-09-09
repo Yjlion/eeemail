@@ -96,8 +96,13 @@ export type MessageRow = {
   encrypted: boolean;
   verified: boolean;
   hasAttachment: boolean;
+  /** As the sender marked it. Absent from the wire entirely when normal. */
+  importance: Importance;
   tags: SystemTag[];
 };
+
+/** How important a message claims to be. */
+export type Importance = "high" | "normal" | "low";
 
 export type EncryptionMode = "strict" | "opportunistic" | "lenient";
 export type MdnPolicy = "never" | "verifiedOnly" | "always";
@@ -204,4 +209,32 @@ export type BlocklistEntry = {
   pattern: string;
   added: number;
   reason: string;
+};
+
+/** One phone number on a contact record. */
+export type ContactPhone = {
+  label: string;
+  number: string;
+};
+
+/**
+ * What the address book knows about somebody, beyond their contact row.
+ *
+ * Written back whole rather than a field at a time: a partial update cannot
+ * distinguish "clear this field" from "leave it alone".
+ */
+export type ContactDetails = {
+  organisation: string;
+  jobTitle: string;
+  postal: string;
+  website: string;
+  notes: string;
+  phones: ContactPhone[];
+};
+
+/** A user-defined grouping of contacts, with its own colour. */
+export type ContactCategory = {
+  id: number;
+  name: string;
+  color: string | null;
 };

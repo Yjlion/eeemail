@@ -162,6 +162,16 @@ intent rather than trying to replay this diff.
 | `core/deltachat-jsonrpc/src/api.rs` | A fourth eeemail block: `get_blocklist`, `add_to_blocklist`, `remove_from_blocklist`, `block_sender`, `unblock_sender`. | `block_sender` is deliberately *not* upstream's `block_contact`: it writes the contact row and the blocklist row together, because a caller that does one of them has a feature that looks like it works. On conflict, re-place the block rather than replaying the diff. | [0027](adr/0027-a-blocklist-that-trashes-on-arrival.md) |
 | `core/deltachat-jsonrpc/src/api/types/email.rs` | `JsonrpcBlocklistEntry`, and a `Blocked` variant on `JsonrpcTrashReason`. | The blocklist over the wire. The reason variant is a fourth trash reason; adding a fifth means this file, `email/ephemeral.rs`, `desktop/src/types.ts` and the reading pane's notice. | [0027](adr/0027-a-blocklist-that-trashes-on-arrival.md) |
 
+| `core/src/sql/migrations.rs` | Migration 173: `contact_details`, `contact_phones`, `contact_categories`, `contact_category_members`. | The address book. Side tables keyed by `contacts.id`, the same arrangement `contact_policy` uses, rather than columns on upstream's `contacts` -- nothing here is consulted when deciding how to send a message. | [0028](adr/0028-contacts-are-an-address-book.md) |
+| `core/deltachat-jsonrpc/src/api.rs` | A fifth eeemail block: `search_contacts`, `get`/`set_contact_details`, and the six category methods. | `search_contacts` deliberately replaces `get_contacts` for the address book: the upstream call hardcodes `blocked=0`, returns key-contacts or address-contacts but never both, and hides low-origin rows. On conflict, re-place the block rather than replaying the diff. | [0028](adr/0028-contacts-are-an-address-book.md) |
+| `core/deltachat-jsonrpc/src/api/types/email.rs` | `JsonrpcContactDetails`, `JsonrpcPhone`, `JsonrpcContactCategory`. | Address-book types. `Details` and `Phone` are `Deserialize` as well, because a record is written back whole. | [0028](adr/0028-contacts-are-an-address-book.md) |
+
+| `core/src/sql/migrations.rs` | Migration 174: `CREATE TABLE msg_importance`. | How important a message claims to be. No row means normal, which is almost every message, so the table stays small. | [0029](adr/0029-importance-travels-on-the-wire.md) |
+| `core/src/mimeparser.rs` | One method, `get_header_raw`, reading the existing lowercased header map by name. | `get_header` takes a `HeaderDef`, so reading a header upstream has no variant for would mean a patch to an upstream enum per header, forever. `merge_headers` already lowercases every key into the map this reads, so nothing else was needed. | [0029](adr/0029-importance-travels-on-the-wire.md) |
+| `core/src/mimefactory.rs` | An `importance` field, read in the existing eeemail block in `load_from_db`, emitted as `Importance` and `X-Priority` beside the `Cc` patch. | **Both headers absent when the value is `Normal`**, so an unmarked message is byte-identical to what upstream emits and no upstream MIME test moves. Two headers because Outlook reads one and everything else reads the other. | [0029](adr/0029-importance-travels-on-the-wire.md) |
+| `core/src/receive_imf.rs` | One more call in the existing best-effort block: `email::importance::set`, from three headers. | Records what the sender claimed. No new patch site. | [0029](adr/0029-importance-travels-on-the-wire.md) |
+| `core/deltachat-jsonrpc/src/api.rs` | `send_email` gains a seventh parameter; `set_message_importance` and `get_message_importance`; `importance` on `JsonrpcMessageRow`. | **`send_email`'s arity is load-bearing**: `yerpc` compares positional counts with `!=`, so a six-argument call to the seven-parameter method is `invalid params`, not a `None`. The three live-pass scripts in `scripts/` call it and no CI job runs them, so a stale call is caught by nothing. Every caller moves together or none does. | [0029](adr/0029-importance-travels-on-the-wire.md) |
+
 ## New files (not upstream, no merge risk)
 
 | File | Purpose | ADR |
@@ -178,6 +188,8 @@ intent rather than trying to replay this diff.
 | `core/src/email/structured.rs` | SML / Schema.org-for-Email extraction with a trust verdict | [0016](adr/0016-structured-email.md) |
 | `core/src/email/signature.rs` | The signature appended to outgoing mail, in both alternatives | [0025](adr/0025-composed-html.md) |
 | `core/src/email/blocklist.rs` | Addresses and domains whose mail is trashed on arrival | [0027](adr/0027-a-blocklist-that-trashes-on-arrival.md) |
+| `core/src/email/addressbook.rs` | Contact records, categories, and a search that returns everybody | [0028](adr/0028-contacts-are-an-address-book.md) |
+| `core/src/email/importance.rs` | `Importance:` / `X-Priority:` in both directions | [0029](adr/0029-importance-travels-on-the-wire.md) |
 | `core/src/email/vault.rs` | At-rest protection reporting | [0015](adr/0015-at-rest-and-backup.md) |
 | `core/src/email/backup.rs` | Encrypted backup with staleness tracking | [0015](adr/0015-at-rest-and-backup.md) |
 | `core/deltachat-jsonrpc/src/api/types/email.rs` | JSON-RPC types for the email layer | [0012](adr/0012-rpc-and-cli.md) |

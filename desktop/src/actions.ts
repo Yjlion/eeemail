@@ -13,12 +13,14 @@ import { state, changed } from "./state";
 import { reload } from "./nav";
 import { exportFile } from "./shell";
 import type { MenuItem } from "./views/menu";
-import type { Contact, Message, Recipient, SystemTag } from "./types";
+import type { Contact, Importance, Message, Recipient, SystemTag } from "./types";
 
 /** What the caller knows about the message the menu was opened on. */
 export type Target = {
   msgId: number;
   tags: SystemTag[];
+  /** What the message is marked, where the caller knows. */
+  importance?: Importance;
   /** Whether the original bytes are still retained, where the caller knows. */
   retained?: boolean;
 };
@@ -55,6 +57,16 @@ export function itemsFor(target: Target): MenuItem[] {
   }
 
   items.push(null);
+  items.push(
+    target.importance === "high"
+      ? { label: "Clear importance", act: "importance-normal" }
+      : { label: "Mark as important", act: "importance-high" },
+  );
+  items.push(
+    target.importance === "low"
+      ? { label: "Clear importance", act: "importance-normal" }
+      : { label: "Mark as low priority", act: "importance-low" },
+  );
   items.push({ label: "Tags…", act: "tags" });
   items.push({ label: "Block sender…", act: "block-sender", danger: true });
   items.push(null);
@@ -114,6 +126,17 @@ export async function run(act: string, msgId: number): Promise<boolean> {
       );
       if (!ok) return false;
       await rpc.call("delete_trashed_messages", [account, [msgId]]);
+      return true;
+    }
+
+    case "importance-high":
+    case "importance-low":
+    case "importance-normal": {
+      const level = act.slice("importance-".length);
+      // On a message already sent this changes only the local record: the
+      // headers went out with it, and nothing here rewrites what the
+      // correspondent received.
+      await rpc.call("set_message_importance", [account, msgId, level]);
       return true;
     }
 

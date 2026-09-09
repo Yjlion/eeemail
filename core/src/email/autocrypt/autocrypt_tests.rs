@@ -2,6 +2,8 @@
 
 use anyhow::Result;
 
+use crate::email::importance::Importance;
+
 use super::*;
 use crate::aheader::{Aheader, EncryptPreference};
 use crate::config::Config;
@@ -218,6 +220,7 @@ async fn test_mail_after_an_autocrypt_header_is_encrypted() -> Result<()> {
         "the body",
         None,
         None,
+        Importance::Normal,
     )
     .await?;
     let sent = alice.pop_sent_msg().await;

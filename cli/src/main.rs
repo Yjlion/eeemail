@@ -55,6 +55,15 @@ Gating and the trash
   blocklist                     addresses and domains whose mail is rejected
   blocklist add <pattern>       block `spam@example.com` or `@example.com`
   blocklist remove <pattern>    stop blocking a pattern
+
+Address book
+  contacts [query]              search everyone, by name, address, org or note
+  contact show <contact-id>     one contact's record and categories
+  contact set <id> <field> <v>  organisation | job-title | postal | website | notes
+  categories                    list contact categories
+  category create <name>        create a category
+  category assign <id> <cat-id>     put a contact in a category
+  category remove <id> <cat-id>     take a contact out of a category
   trash <msg-id>                throw a message away, recoverably
   restore <msg-id>              take a message back out of the trash
   ephemeral get <msg-id>        when this message expires, if ever
@@ -77,6 +86,8 @@ Policy
   receipts set <policy>         set who gets read receipts
   signature get                 the signature appended to outgoing mail
   signature set <text>          set it; an empty string removes it
+  importance get <msg-id>       high | normal | low, as the sender marked it
+  importance set <msg-id> <lvl> mark a message high, normal or low
 ";
 
 #[tokio::main(flavor = "multi_thread")]
@@ -335,6 +346,83 @@ async fn dispatch(ctx: &Context, command: &str, args: &[&str]) -> Result<Value> 
             email::gating::set_enabled(ctx, enabled).await?;
             Ok(json!({ "enabled": enabled }))
         }
+        ("contacts", []) | ("contacts", [_]) => {
+            let query = args.first().copied().unwrap_or("");
+            let ids = email::addressbook::search(ctx, query, None, false).await?;
+            let mut out = Vec::with_capacity(ids.len());
+            for id in ids {
+                let contact = deltachat::contact::Contact::get_by_id(ctx, id).await?;
+                out.push(json!({
+                    "id": id.to_u32(),
+                    "addr": contact.get_addr(),
+                    "name": contact.get_display_name(),
+                }));
+            }
+            Ok(json!({ "contacts": out }))
+        }
+        ("contact", ["show", id]) => {
+            let contact_id = contact_id(id)?;
+            let contact = deltachat::contact::Contact::get_by_id(ctx, contact_id).await?;
+            let d = email::addressbook::details(ctx, contact_id).await?;
+            Ok(json!({
+                "id": contact_id.to_u32(),
+                "addr": contact.get_addr(),
+                "name": contact.get_display_name(),
+                "blocked": contact.is_blocked(),
+                "organisation": d.organisation,
+                "jobTitle": d.job_title,
+                "postal": d.postal,
+                "website": d.website,
+                "notes": d.notes,
+                "phones": d.phones.iter()
+                    .map(|p| json!({ "label": p.label, "number": p.number }))
+                    .collect::<Vec<_>>(),
+                "categories": email::addressbook::categories_of(ctx, contact_id).await?
+                    .iter()
+                    .map(|c| json!({ "id": c.id, "name": c.name }))
+                    .collect::<Vec<_>>(),
+            }))
+        }
+        ("contact", ["set", id, field, value]) => {
+            let contact_id = contact_id(id)?;
+            let mut d = email::addressbook::details(ctx, contact_id).await?;
+            match *field {
+                "organisation" => d.organisation = value.to_string(),
+                "job-title" => d.job_title = value.to_string(),
+                "postal" => d.postal = value.to_string(),
+                "website" => d.website = value.to_string(),
+                "notes" => d.notes = value.to_string(),
+                other => bail!(
+                    "unknown field {other:?}; expected organisation, job-title, postal, website or notes"
+                ),
+            }
+            email::addressbook::set_details(ctx, contact_id, &d).await?;
+            Ok(json!({ "id": contact_id.to_u32(), "field": field, "value": value }))
+        }
+        ("categories", []) => Ok(json!({
+            "categories": email::addressbook::categories(ctx).await?
+                .iter()
+                .map(|c| json!({ "id": c.id, "name": c.name, "color": c.color }))
+                .collect::<Vec<_>>(),
+        })),
+        ("category", ["create", name]) => {
+            let category = email::addressbook::create_category(ctx, name, None).await?;
+            Ok(json!({ "id": category.id, "name": category.name }))
+        }
+        ("category", ["assign", id, category_id]) => {
+            let category_id: i64 = category_id
+                .parse()
+                .with_context(|| format!("bad category id {category_id:?}"))?;
+            email::addressbook::assign(ctx, contact_id(id)?, category_id).await?;
+            Ok(json!({ "assigned": true }))
+        }
+        ("category", ["remove", id, category_id]) => {
+            let category_id: i64 = category_id
+                .parse()
+                .with_context(|| format!("bad category id {category_id:?}"))?;
+            email::addressbook::unassign(ctx, contact_id(id)?, category_id).await?;
+            Ok(json!({ "assigned": false }))
+        }
         ("blocklist", []) => Ok(json!({
             "entries": email::blocklist::list(ctx)
                 .await?
@@ -370,12 +458,25 @@ async fn dispatch(ctx: &Context, command: &str, args: &[&str]) -> Result<Value> 
             .await?;
             Ok(json!({ "plain": email::signature::load(ctx).await?.map(|s| s.plain) }))
         }
+        ("importance", ["get", id]) => Ok(json!({
+            "importance": match email::importance::of_msg(ctx, msg_id(id)?).await? {
+                email::importance::Importance::High => "high",
+                email::importance::Importance::Low => "low",
+                email::importance::Importance::Normal => "normal",
+            },
+        })),
+        ("importance", ["set", id, level]) => {
+            let importance = match *level {
+                "high" => email::importance::Importance::High,
+                "normal" => email::importance::Importance::Normal,
+                "low" => email::importance::Importance::Low,
+                other => bail!("expected high, normal or low, got {other:?}"),
+            };
+            email::importance::set(ctx, msg_id(id)?, importance).await?;
+            Ok(json!({ "importance": level }))
+        }
         ("release", [id]) => {
-            let contact_id = deltachat::contact::ContactId::new(
-                id.parse()
-                    .with_context(|| format!("bad contact id {id:?}"))?,
-            );
-            let released = email::gating::release(ctx, &[contact_id]).await?;
+            let released = email::gating::release(ctx, &[contact_id(id)?]).await?;
             // Zero is the expected answer for a contact who is still a
             // stranger: releasing is a consequence of trust, not a way to get it.
             Ok(json!({ "released": released }))
@@ -501,6 +602,13 @@ fn msg_id(raw: &str) -> Result<MsgId> {
     Ok(MsgId::new(
         raw.parse()
             .with_context(|| format!("{raw:?} is not a message id"))?,
+    ))
+}
+
+fn contact_id(raw: &str) -> Result<deltachat::contact::ContactId> {
+    Ok(deltachat::contact::ContactId::new(
+        raw.parse()
+            .with_context(|| format!("{raw:?} is not a contact id"))?,
     ))
 }
 

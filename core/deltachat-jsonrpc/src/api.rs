@@ -52,10 +52,11 @@ use types::calls::JsonrpcCallInfo;
 use types::chat::FullChat;
 use types::contact::{ContactObject, VcardContact};
 use types::email::{
-    JsonrpcBackupStatus, JsonrpcBlocklistEntry, JsonrpcEncryptionMode, JsonrpcLabel,
-    JsonrpcMdnPolicy, JsonrpcMessageCrypto, JsonrpcMessageRow, JsonrpcProtection, JsonrpcRecipient,
-    JsonrpcRecipientSet, JsonrpcSearchQuery, JsonrpcServerRetention, JsonrpcStructuredObject,
-    JsonrpcSystemTag, JsonrpcTags, JsonrpcThreadItem, JsonrpcTrashed, flatten_thread,
+    JsonrpcBackupStatus, JsonrpcBlocklistEntry, JsonrpcContactCategory, JsonrpcContactDetails,
+    JsonrpcEncryptionMode, JsonrpcLabel, JsonrpcMdnPolicy, JsonrpcMessageCrypto, JsonrpcMessageRow,
+    JsonrpcProtection, JsonrpcRecipient, JsonrpcRecipientSet, JsonrpcSearchQuery,
+    JsonrpcServerRetention, JsonrpcStructuredObject, JsonrpcSystemTag, JsonrpcTags,
+    JsonrpcThreadItem, JsonrpcTrashed, flatten_thread,
 };
 use types::events::Event;
 use types::http::HttpResponse;
@@ -3376,6 +3377,147 @@ impl CommandApi {
         Ok(u32::try_from(released).unwrap_or(u32::MAX))
     }
 
+    // --- eeemail: the address book ----------------------------------------
+
+    /// Everyone the mailbox knows, filtered by a substring and by category.
+    ///
+    /// Not `get_contacts`, which cannot answer this: it hardcodes
+    /// `blocked=0`, returns key-contacts or address-contacts but never both,
+    /// and hides anyone below `Origin::IncomingReplyTo`. An empty query
+    /// returns everybody.
+    async fn search_contacts(
+        &self,
+        account_id: u32,
+        query: String,
+        category_id: Option<i64>,
+        include_blocked: bool,
+    ) -> Result<Vec<ContactObject>> {
+        let ctx = self.get_context(account_id).await?;
+        let ids = email::addressbook::search(&ctx, &query, category_id, include_blocked).await?;
+        let mut contacts = Vec::with_capacity(ids.len());
+        for id in ids {
+            contacts.push(
+                ContactObject::try_from_dc_contact(&ctx, Contact::get_by_id(&ctx, id).await?)
+                    .await?,
+            );
+        }
+        Ok(contacts)
+    }
+
+    /// A contact's address-book record. A contact with none has empty fields.
+    async fn get_contact_details(
+        &self,
+        account_id: u32,
+        contact_id: u32,
+    ) -> Result<JsonrpcContactDetails> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(
+            email::addressbook::details(&ctx, ContactId::new(contact_id))
+                .await?
+                .into(),
+        )
+    }
+
+    /// Writes a contact's record, replacing whatever was there.
+    async fn set_contact_details(
+        &self,
+        account_id: u32,
+        contact_id: u32,
+        details: JsonrpcContactDetails,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::addressbook::set_details(&ctx, ContactId::new(contact_id), &details.into()).await
+    }
+
+    /// Every contact category, by name.
+    async fn get_contact_categories(&self, account_id: u32) -> Result<Vec<JsonrpcContactCategory>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::addressbook::categories(&ctx)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// Creates a category, or returns the existing one with that name.
+    async fn create_contact_category(
+        &self,
+        account_id: u32,
+        name: String,
+        color: Option<u32>,
+    ) -> Result<JsonrpcContactCategory> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::addressbook::create_category(&ctx, &name, color)
+            .await?
+            .into())
+    }
+
+    /// Renames a category. Errors if another already has that name.
+    async fn rename_contact_category(
+        &self,
+        account_id: u32,
+        category_id: i64,
+        new_name: String,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::addressbook::rename_category(&ctx, category_id, &new_name).await
+    }
+
+    /// Sets or clears a category's colour.
+    async fn set_contact_category_color(
+        &self,
+        account_id: u32,
+        category_id: i64,
+        color: Option<u32>,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::addressbook::set_category_color(&ctx, category_id, color).await
+    }
+
+    /// Deletes a category. The contacts in it are untouched.
+    async fn delete_contact_category(&self, account_id: u32, category_id: i64) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::addressbook::delete_category(&ctx, category_id).await
+    }
+
+    /// Puts a contact in a category. Already being in it is not an error.
+    async fn assign_contact_category(
+        &self,
+        account_id: u32,
+        contact_id: u32,
+        category_id: i64,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::addressbook::assign(&ctx, ContactId::new(contact_id), category_id).await
+    }
+
+    /// Takes a contact out of a category. Not being in it is not an error.
+    async fn unassign_contact_category(
+        &self,
+        account_id: u32,
+        contact_id: u32,
+        category_id: i64,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::addressbook::unassign(&ctx, ContactId::new(contact_id), category_id).await
+    }
+
+    /// The categories a contact is in.
+    async fn get_contact_categories_of(
+        &self,
+        account_id: u32,
+        contact_id: u32,
+    ) -> Result<Vec<JsonrpcContactCategory>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(
+            email::addressbook::categories_of(&ctx, ContactId::new(contact_id))
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        )
+    }
+
     // --- eeemail: the blocklist -------------------------------------------
 
     /// Every blocklist entry, most recently added first.
@@ -3559,6 +3701,7 @@ impl CommandApi {
             };
             let crypto = email::policy::message_crypto(&ctx, msg_id).await?;
             let tags = email::tags::of_msg(&ctx, msg_id).await?;
+            let importance = email::importance::of_msg(&ctx, msg_id).await?;
             let from = match Contact::get_by_id(&ctx, msg.get_from_id()).await {
                 Ok(contact) => contact.get_display_name().to_string(),
                 Err(_) => String::new(),
@@ -3586,6 +3729,7 @@ impl CommandApi {
                 timestamp: msg.get_timestamp(),
                 unread: msg.get_state() == MessageState::InFresh,
                 encrypted: crypto.encrypted,
+                importance: importance_name(importance).to_string(),
                 verified: crypto.verified,
                 has_attachment: msg.get_file(&ctx).is_some(),
                 tags: tags.system.into_iter().map(Into::into).collect(),
@@ -3607,6 +3751,16 @@ impl CommandApi {
     /// is sent as a `text/html` alternative *beside* it, not instead of it, so
     /// a correspondent whose client shows plain text reads the message rather
     /// than a blank body. See `docs/adr/0025-composed-html.md`.
+    ///
+    /// `importance` is `"high"`, `"normal"` or `"low"`; `null` means normal,
+    /// which puts no header on the message at all.
+    ///
+    /// **The arity of this method is load-bearing.** `yerpc` compares
+    /// positional parameter counts with `!=`, so a caller passing six
+    /// arguments to this seven-parameter method gets `invalid params` rather
+    /// than a `None` for the one it left out. Every caller moves together or
+    /// none does -- including the three live-pass scripts in `scripts/`, which
+    /// no CI job runs.
     async fn send_email(
         &self,
         account_id: u32,
@@ -3615,6 +3769,7 @@ impl CommandApi {
         text: String,
         attachment: Option<String>,
         html: Option<String>,
+        importance: Option<String>,
     ) -> Result<u32> {
         let ctx = self.get_context(account_id).await?;
         let path = attachment.map(std::path::PathBuf::from);
@@ -3625,9 +3780,35 @@ impl CommandApi {
             &text,
             path.as_deref(),
             html.as_deref(),
+            parse_importance(importance.as_deref())?,
         )
         .await?;
         Ok(msg_id.to_u32())
+    }
+
+    /// Marks a message as high, normal or low importance.
+    ///
+    /// Local only on a message already sent: the headers went out with it, and
+    /// nothing here rewrites what a correspondent received.
+    async fn set_message_importance(
+        &self,
+        account_id: u32,
+        msg_id: u32,
+        importance: Option<String>,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::importance::set(
+            &ctx,
+            MsgId::new(msg_id),
+            parse_importance(importance.as_deref())?,
+        )
+        .await
+    }
+
+    /// A message's importance, as `"high"`, `"normal"` or `"low"`.
+    async fn get_message_importance(&self, account_id: u32, msg_id: u32) -> Result<String> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(importance_name(email::importance::of_msg(&ctx, MsgId::new(msg_id)).await?).to_string())
     }
 
     // -----------------------------------------------------------------------
@@ -3706,6 +3887,31 @@ async fn get_config(
     } else {
         ctx.get_config(Config::from_str(key).with_context(|| format!("unknown key {key:?}"))?)
             .await
+    }
+}
+
+/// eeemail: an importance name to the enum. `None` and `"normal"` are normal.
+///
+/// An unrecognised word is an error rather than a silent `Normal`: a client
+/// that sends `"urgent"` has a bug, and marking the message normal would hide
+/// it behind a message that quietly went out unmarked.
+fn parse_importance(name: Option<&str>) -> Result<email::importance::Importance> {
+    use email::importance::Importance;
+    Ok(match name.unwrap_or("normal") {
+        "high" => Importance::High,
+        "normal" => Importance::Normal,
+        "low" => Importance::Low,
+        other => anyhow::bail!("unknown importance {other:?}; expected high, normal or low"),
+    })
+}
+
+/// eeemail: the enum back to the name a client sends and receives.
+fn importance_name(importance: email::importance::Importance) -> &'static str {
+    use email::importance::Importance;
+    match importance {
+        Importance::High => "high",
+        Importance::Normal => "normal",
+        Importance::Low => "low",
     }
 }
 

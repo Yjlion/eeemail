@@ -399,7 +399,7 @@ def step2a_first_contact(ee: Rpc, dana: int, upstream: Rpc, erin: int, workdir: 
 
     ee.call("send_email", dana,
             {"to": [f"erin@{DOMAIN}"], "cc": [f"carol@{DOMAIN}"], "bcc": []},
-            SUBJECT, BODY, attachment, None)
+            SUBJECT, BODY, attachment, None, None)
 
     message = wait_stock(upstream, erin, lambda m: m["subject"] == SUBJECT,
                          "erin to receive dana's first message")
@@ -471,7 +471,7 @@ def step2d_we_encrypt_and_they_can_read_it(ee: Rpc, dana: int,
     """
     subject = f"[{TOKEN}] Second look"
     sent_id = ee.call("send_email", dana, {"to": [f"erin@{DOMAIN}"], "cc": [], "bcc": []},
-                      subject, "This one should be encrypted.", None, None)
+                      subject, "This one should be encrypted.", None, None, None)
     # Waited for, not read straight back: send_email queues the message, and the
     # encryption state is settled when mimefactory renders it, not when the call
     # returns.
@@ -635,7 +635,7 @@ def step5_securejoin_they_invite(upstream: Rpc, grace: int, ee: Rpc, frank: int)
 
     subject = f"[{TOKEN}] Verified across engines"
     ee.call("send_email", frank, {"to": [f"grace@{DOMAIN}"], "cc": [], "bcc": []},
-            subject, "This one is verified on both sides.", None, None)
+            subject, "This one is verified on both sides.", None, None, None)
     message = wait_stock(upstream, grace, lambda m: m["subject"] == subject,
                          "grace to receive the post-verification message",
                          timeout=ARRIVAL_TIMEOUT * 2)

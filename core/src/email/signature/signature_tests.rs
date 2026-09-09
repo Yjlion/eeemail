@@ -2,6 +2,8 @@
 
 use anyhow::Result;
 
+use crate::email::importance::Importance;
+
 use super::*;
 use crate::email::compose::{RecipientSet, send};
 use crate::email::policy::EncryptionMode;
@@ -30,6 +32,7 @@ async fn sent_payload(alice: &TestContext, to: &str, text: &str, html: Option<&s
         text,
         None,
         html,
+        Importance::Normal,
     )
     .await
     .expect("send failed");

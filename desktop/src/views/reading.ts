@@ -15,6 +15,7 @@ import { state, changed } from "../state";
 import { renderPlainText, sandboxedDocument, hasRemoteContent, escapeHtml } from "../html";
 import { TAG_LABELS } from "../types";
 import type {
+  Importance,
   Message,
   MessageCrypto,
   MessageTags,
@@ -49,6 +50,7 @@ export async function renderReading(el: HTMLElement): Promise<void> {
     expiresAt,
     threadId,
     structured,
+    importance,
   ] = (await Promise.all([
       rpc.call("get_message", [account, msgId]),
       rpc.call("get_message_recipients", [account, msgId]),
@@ -60,6 +62,7 @@ export async function renderReading(el: HTMLElement): Promise<void> {
       rpc.call("get_message_ephemeral_timer", [account, msgId]),
       rpc.call("get_message_thread", [account, msgId]),
       rpc.call("get_structured_data", [account, msgId]),
+      rpc.call("get_message_importance", [account, msgId]),
     ])) as [
       Message,
       Recipient[],
@@ -71,6 +74,7 @@ export async function renderReading(el: HTMLElement): Promise<void> {
       number | null,
       number | null,
       StructuredObject[],
+      Importance,
     ];
 
   const htmlBody = msg.hasHtml
@@ -135,6 +139,8 @@ export async function renderReading(el: HTMLElement): Promise<void> {
   }
 
   const badges = [
+    importance === "high" ? `<span class="badge important">important</span>` : "",
+    importance === "low" ? `<span class="badge">low priority</span>` : "",
     crypto.encrypted
       ? `<span class="badge enc">end-to-end encrypted</span>`
       : `<span class="badge plain">not encrypted</span>`,
@@ -228,7 +234,7 @@ export async function renderReading(el: HTMLElement): Promise<void> {
     await renderThread(el.querySelector<HTMLElement>("#thread")!, thread);
   }
 
-  wireActions(el, msgId, msg.chatId, tags, retained);
+  wireActions(el, msgId, msg.chatId, tags, retained, importance);
 }
 
 /**
@@ -362,6 +368,7 @@ function wireActions(
   chatId: number,
   tags: MessageTags,
   retained: boolean,
+  importance: Importance,
 ): void {
   const account = state.accountId;
 
@@ -396,7 +403,7 @@ function wireActions(
     // Not over the sandboxed body frame. That document is the message's, and
     // its own context menu is the browser's business, not ours.
     if ((event.target as Element).closest("iframe")) return;
-    void showMenuFor(event, { msgId, tags: tags.system, retained });
+    void showMenuFor(event, { msgId, tags: tags.system, retained, importance });
   });
 
   const timer = el.querySelector<HTMLSelectElement>("select[data-act='timer']");

@@ -21,19 +21,19 @@ import { rpc } from "../client";
 import { state, changed } from "../state";
 import { escapeHtml } from "../html";
 import { when } from "./list";
-import type { BlocklistEntry, Contact } from "../types";
-
-/**
- * `DC_GCL_ADDRESS`: include address-contacts, not only key-contacts.
- *
- * Without it `get_contacts` returns key-contacts alone, so the half of the
- * address book that has only ever been written to is invisible. This is the
- * closest the upstream call gets to "everyone"; `search_contacts` replaces it.
- */
-const GCL_ADDRESS = 0x400;
+import type {
+  BlocklistEntry,
+  Contact,
+  ContactCategory,
+  ContactDetails,
+} from "../types";
 
 let contacts: Contact[] = [];
 let blocked: BlocklistEntry[] = [];
+let categories: ContactCategory[] = [];
+let openDetails: ContactDetails | null = null;
+let openCategoryIds: number[] = [];
+let categoryFilter: number | null = null;
 let qrSvg: string | null = null;
 let query = "";
 
@@ -47,6 +47,10 @@ let query = "";
 export function resetContactsCache(): void {
   contacts = [];
   blocked = [];
+  categories = [];
+  openDetails = null;
+  openCategoryIds = [];
+  categoryFilter = null;
   qrSvg = null;
   query = "";
 }
@@ -54,12 +58,34 @@ export function resetContactsCache(): void {
 async function load(): Promise<void> {
   // The third parameter is a substring filter the engine applies itself, and
   // it was hardcoded `null` for as long as this screen has existed.
-  contacts = (await rpc.call("get_contacts", [
+  // `search_contacts`, not `get_contacts`. The upstream call cannot answer
+  // "everyone": it hardcodes `blocked=0`, returns key-contacts or
+  // address-contacts but never both, and hides anyone below
+  // `Origin::IncomingReplyTo`.
+  contacts = (await rpc.call("search_contacts", [
     state.accountId,
-    GCL_ADDRESS,
-    query.trim() || null,
+    query.trim(),
+    categoryFilter,
+    false,
   ])) as Contact[];
   blocked = (await rpc.call("get_blocklist", [state.accountId])) as BlocklistEntry[];
+  categories = (await rpc.call("get_contact_categories", [
+    state.accountId,
+  ])) as ContactCategory[];
+
+  // Only for the record that is open. Fetching a record per row would be one
+  // round trip per contact to render fields the list does not show.
+  if (state.selectedContactId !== null) {
+    const [details, of] = (await Promise.all([
+      rpc.call("get_contact_details", [state.accountId, state.selectedContactId]),
+      rpc.call("get_contact_categories_of", [state.accountId, state.selectedContactId]),
+    ])) as [ContactDetails, ContactCategory[]];
+    openDetails = details;
+    openCategoryIds = of.map((c) => c.id);
+  } else {
+    openDetails = null;
+    openCategoryIds = [];
+  }
   if (qrSvg === null) {
     try {
       const code = (await rpc.call("get_chat_securejoin_qr_code", [
@@ -80,7 +106,22 @@ function selected(): Contact | null {
   return contacts.find((c) => c.id === state.selectedContactId) ?? null;
 }
 
-function detail(c: Contact): string {
+function phoneRows(d: ContactDetails): string {
+  // One spare blank row, so adding a number needs no click. The engine drops
+  // an empty number rather than storing it.
+  const rows = [...d.phones, { label: "", number: "" }];
+  return rows.map(phoneRow).join("");
+}
+
+function phoneRow(p: { label: string; number: string }): string {
+  return `
+    <div class="phone-row">
+      <input name="phoneLabel" placeholder="work" value="${escapeHtml(p.label)}" autocomplete="off" />
+      <input name="phoneNumber" placeholder="Number" value="${escapeHtml(p.number)}" autocomplete="off" />
+    </div>`;
+}
+
+function detail(c: Contact, d: ContactDetails): string {
   const seen = c.lastSeen > 0 ? when(c.lastSeen) : "never";
   return `
     <div class="contact-detail" data-contact-id="${c.id}">
@@ -100,9 +141,52 @@ function detail(c: Contact): string {
         <dt>Last seen</dt><dd>${escapeHtml(seen)}</dd>
       </dl>
 
-      <form class="inline-form" id="rename-contact">
+      <form id="contact-record">
         <label>Name <input name="name" value="${escapeHtml(c.name ?? c.displayName)}" autocomplete="off" /></label>
-        <button type="submit">Save</button>
+        <div class="grid">
+          <label>Organisation
+            <input name="organisation" value="${escapeHtml(d.organisation)}" autocomplete="off" />
+          </label>
+          <label>Job title
+            <input name="jobTitle" value="${escapeHtml(d.jobTitle)}" autocomplete="off" />
+          </label>
+        </div>
+        <label>Website
+          <input name="website" value="${escapeHtml(d.website)}" autocomplete="off" />
+        </label>
+        <label>Postal address
+          <textarea name="postal" rows="2">${escapeHtml(d.postal)}</textarea>
+        </label>
+        <label>Notes
+          <textarea name="notes" rows="2">${escapeHtml(d.notes)}</textarea>
+        </label>
+
+        <h3 class="section">Phone numbers</h3>
+        <div id="phones">
+          ${phoneRows(d)}
+        </div>
+        <button type="button" id="add-phone" class="quiet-add">Add a number</button>
+
+        <h3 class="section">Categories</h3>
+        ${
+          categories.length
+            ? `<div class="category-picker">
+                ${categories
+                  .map(
+                    (cat) => `
+                  <label class="check">
+                    <input type="checkbox" data-category-id="${cat.id}"${
+                      openCategoryIds.includes(cat.id) ? " checked" : ""
+                    } />
+                    <span class="dot" style="background:${escapeHtml(cat.color ?? "transparent")}"></span>
+                    ${escapeHtml(cat.name)}
+                  </label>`,
+                  )
+                  .join("")}
+               </div>`
+            : `<p class="hint">No categories yet. Make one below.</p>`
+        }
+        <div class="actions"><button type="submit">Save record</button></div>
       </form>
 
       <div class="contact-actions">
@@ -147,6 +231,24 @@ export async function renderContacts(el: HTMLElement): Promise<void> {
 
       <div class="contacts-body">
         <div class="contacts-list">
+          ${
+            categories.length
+              ? `<div class="category-chips">
+                  <button data-filter-category="all"
+                          aria-current="${categoryFilter === null ? "true" : "false"}">All</button>
+                  ${categories
+                    .map(
+                      (cat) => `
+                    <button data-filter-category="${cat.id}"
+                            aria-current="${categoryFilter === cat.id ? "true" : "false"}">
+                      <span class="dot" style="background:${escapeHtml(cat.color ?? "transparent")}"></span>
+                      ${escapeHtml(cat.name)}
+                    </button>`,
+                    )
+                    .join("")}
+                 </div>`
+              : ""
+          }
           <input id="contact-search" type="search" placeholder="Search contacts"
                  value="${escapeHtml(query)}" autocomplete="off" aria-label="Search contacts" />
           <div class="contact-rows">
@@ -167,9 +269,42 @@ export async function renderContacts(el: HTMLElement): Promise<void> {
         </div>
 
         <div class="contacts-detail">
-          ${current ? detail(current) : `<div class="empty small">Pick somebody to see their details.</div>`}
+          ${
+            current && openDetails
+              ? detail(current, openDetails)
+              : `<div class="empty small">Pick somebody to see their details.</div>`
+          }
         </div>
       </div>
+
+      <h2 class="section">Categories (${categories.length})</h2>
+      <p class="hint">
+        A way to group people. Separate from the tags you put on mail, so a
+        category never turns up in the sidebar as a mailbox.
+      </p>
+      <div class="category-list">
+        ${
+          categories.length
+            ? categories
+                .map(
+                  (cat) => `
+          <div class="category-row">
+            <span class="dot" style="background:${escapeHtml(cat.color ?? "transparent")}"></span>
+            <span class="category-name">${escapeHtml(cat.name)}</span>
+            <button data-act="delete-category" data-category-id="${cat.id}" class="danger">
+              Delete
+            </button>
+          </div>`,
+                )
+                .join("")
+            : `<div class="empty small">None yet</div>`
+        }
+      </div>
+      <form id="new-category" class="inline-form">
+        <label>New category <input name="name" autocomplete="off" required /></label>
+        <input name="color" type="color" value="#2563eb" aria-label="Colour" />
+        <button type="submit">Create</button>
+      </form>
 
       <h2 class="section">Blocked (${blocked.length})</h2>
       <p class="hint">
@@ -288,21 +423,108 @@ export async function renderContacts(el: HTMLElement): Promise<void> {
     }
   });
 
-  el.querySelector<HTMLFormElement>("#rename-contact")?.addEventListener("submit", async (event) => {
+  // One spare row is rendered already; this adds another when it is used up.
+  el.querySelector<HTMLButtonElement>("#add-phone")?.addEventListener("click", () => {
+    const phones = el.querySelector<HTMLElement>("#phones");
+    if (!phones) return;
+    const row = document.createElement("div");
+    row.className = "phone-row";
+    row.innerHTML = `
+      <input name="phoneLabel" placeholder="work" autocomplete="off" />
+      <input name="phoneNumber" placeholder="Number" autocomplete="off" />`;
+    phones.append(row);
+  });
+
+  el.querySelector<HTMLFormElement>("#contact-record")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!current) return;
     const form = event.target as HTMLFormElement;
+    const field = (name: string) =>
+      (form.elements.namedItem(name) as HTMLInputElement | HTMLTextAreaElement).value.trim();
+
+    // Read positionally: the two inputs of a row are siblings, and pairing them
+    // by index across two `getElementsByName` lists would silently mismatch the
+    // moment a row is missing one.
+    const phones = [...form.querySelectorAll<HTMLElement>(".phone-row")]
+      .map((row) => ({
+        label: row.querySelector<HTMLInputElement>("[name='phoneLabel']")?.value.trim() ?? "",
+        number: row.querySelector<HTMLInputElement>("[name='phoneNumber']")?.value.trim() ?? "",
+      }))
+      .filter((p) => p.number !== "");
+
+    const wanted = [...form.querySelectorAll<HTMLInputElement>("input[data-category-id]")]
+      .filter((box) => box.checked)
+      .map((box) => Number(box.dataset["categoryId"]));
+
     try {
-      await rpc.call("change_contact_name", [
+      await rpc.call("change_contact_name", [state.accountId, current.id, field("name")]);
+      await rpc.call("set_contact_details", [
         state.accountId,
         current.id,
-        (form.elements.namedItem("name") as HTMLInputElement).value.trim(),
+        {
+          organisation: field("organisation"),
+          jobTitle: field("jobTitle"),
+          postal: field("postal"),
+          website: field("website"),
+          notes: field("notes"),
+          phones,
+        },
+      ]);
+      // Only the differences, so saving an unchanged record writes nothing.
+      for (const id of wanted.filter((id) => !openCategoryIds.includes(id))) {
+        await rpc.call("assign_contact_category", [state.accountId, current.id, id]);
+      }
+      for (const id of openCategoryIds.filter((id) => !wanted.includes(id))) {
+        await rpc.call("unassign_contact_category", [state.accountId, current.id, id]);
+      }
+      await renderContacts(el);
+      note("Record saved.");
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+  for (const chip of el.querySelectorAll<HTMLButtonElement>("button[data-filter-category]")) {
+    chip.addEventListener("click", () => {
+      const raw = chip.dataset["filterCategory"];
+      const id = raw === "all" ? null : Number(raw);
+      categoryFilter = categoryFilter === id ? null : id;
+      void renderContacts(el);
+    });
+  }
+
+  el.querySelector<HTMLFormElement>("#new-category")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target as HTMLFormElement;
+    const name = (form.elements.namedItem("name") as HTMLInputElement).value.trim();
+    if (!name) return;
+    const color = (form.elements.namedItem("color") as HTMLInputElement).value;
+    try {
+      await rpc.call("create_contact_category", [
+        state.accountId,
+        name,
+        parseInt(color.replace(/^#/, ""), 16),
       ]);
       await renderContacts(el);
     } catch (err) {
       fail(err);
     }
   });
+
+  for (const button of el.querySelectorAll<HTMLButtonElement>("[data-act='delete-category']")) {
+    button.addEventListener("click", async () => {
+      const id = Number(button.dataset["categoryId"]);
+      const name = categories.find((c) => c.id === id)?.name ?? "";
+      if (!window.confirm(`Delete the category "${name}"? The people in it stay.`)) return;
+      try {
+        await rpc.call("delete_contact_category", [state.accountId, id]);
+        if (categoryFilter === id) categoryFilter = null;
+        await renderContacts(el);
+      } catch (err) {
+        fail(err);
+      }
+    });
+  }
 
   const detailEl = el.querySelector<HTMLElement>(".contact-detail");
   detailEl?.querySelector<HTMLButtonElement>("[data-act='release']")?.addEventListener(

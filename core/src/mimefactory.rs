@@ -133,6 +133,13 @@ pub struct MimeFactory {
     /// addressees of its own beyond its chat. See `crate::email::compose`.
     cc: Vec<(String, String)>,
 
+    /// eeemail: how important the message claims to be.
+    ///
+    /// `Normal` on everything the user did not mark, and `Normal` emits no
+    /// header at all -- which is what keeps an ordinary message byte-identical
+    /// to upstream's. See `crate::email::importance`.
+    importance: crate::email::importance::Importance,
+
     /// eeemail: the signature to append, or `None` when none is configured.
     ///
     /// Takes the place of `selfstatus` in the footer when both are set: only
@@ -539,6 +546,9 @@ impl MimeFactory {
         // eeemail: the `Cc` header. Declared out here because it is filled in
         // alongside the key set, which is scoped to the encryption block below.
         let mut cc: Vec<(String, String)> = Vec::new();
+        // eeemail: assigned inside the `Loaded::Message` arm below, which is
+        // the only kind of message a user marks.
+        let mut importance = crate::email::importance::Importance::default();
         let mut to = Vec::new();
         let mut past_members = Vec::new();
         let mut member_fingerprints = Vec::new();
@@ -813,6 +823,9 @@ impl MimeFactory {
             // through a second code path. See `crate::email::compose`.
             let extra =
                 crate::email::compose::extra_recipients(context, msg.id, &recipients).await?;
+            // eeemail: read here, in the block that already reads our own
+            // per-message state, rather than opening a second one.
+            importance = crate::email::importance::of_msg(context, msg.id).await?;
             for entry in &extra.cc {
                 cc.push((entry.name.clone(), entry.addr.clone()));
             }
@@ -909,6 +922,7 @@ impl MimeFactory {
             from_displayname,
             sender_displayname,
             selfstatus,
+            importance,
             email_signature,
             recipients,
             encryption,
@@ -963,6 +977,7 @@ impl MimeFactory {
             from_displayname: "".to_string(),
             sender_displayname: None,
             selfstatus: "".to_string(),
+            importance: crate::email::importance::Importance::default(),
             email_signature: None,
             recipients,
             encryption,
@@ -1238,6 +1253,24 @@ impl MimeFactory {
             headers.push((
                 "Cc",
                 mail_builder::headers::address::Address::new_list(cc).into(),
+            ));
+        }
+
+        // eeemail: how important the sender said this is. Two headers because
+        // clients read different ones -- `Importance` is RFC 4021 and what
+        // Outlook reads, `X-Priority` has no RFC and is what everything else
+        // reads. Both absent when the message is Normal, so an unmarked message
+        // is byte-identical to what upstream emits.
+        if let Some(value) = self.importance.header_importance() {
+            headers.push((
+                "Importance",
+                mail_builder::headers::raw::Raw::new(value).into(),
+            ));
+        }
+        if let Some(value) = self.importance.header_x_priority() {
+            headers.push((
+                "X-Priority",
+                mail_builder::headers::raw::Raw::new(value).into(),
             ));
         }
 

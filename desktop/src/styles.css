@@ -159,6 +159,9 @@ button.danger, .actions button.danger { color: var(--warn); border-color: var(--
 .badge.enc { color: var(--good); border-color: var(--good-border); background: var(--good-bg); }
 .badge.plain { color: var(--warn); border-color: var(--warn-border); background: var(--warn-bg); }
 .badge.verified { color: var(--accent); border-color: #bfdbfe; background: #eff6ff; }
+/* The sender's claim about their own message, so it reads as an assertion
+   rather than as something eeemail worked out. */
+.badge.important { color: #b45309; border-color: #fcd34d; background: #fffbeb; font-weight: 600; }
 .badge.warn-badge { color: var(--warn); border-color: var(--warn-border); background: var(--warn-bg); }
 
 .notice { padding: 9px 11px; border-radius: 6px; margin: 12px 0; font-size: 13px; border: 1px solid var(--border); background: var(--bg-alt); color: var(--text-dim); }
@@ -220,6 +223,28 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; margin
 .contacts-detail { border: 1px solid var(--border); border-radius: 8px; padding: 4px 14px 14px; }
 .contact-detail h2.who { font-size: 16px; margin: 14px 0 6px; }
 .contact-detail #encryption-info { margin-top: 10px; max-height: 200px; }
+
+.phone-row { display: flex; gap: 8px; margin: 4px 0; }
+.phone-row input[name="phoneLabel"] { flex: 0 0 90px; }
+.phone-row input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font: inherit; color: var(--text); min-width: 0; }
+.phone-row input[name="phoneNumber"] { flex: 1; }
+button.quiet-add { font: inherit; font-size: 12px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-alt); cursor: pointer; }
+
+.category-picker { display: flex; flex-wrap: wrap; gap: 10px; }
+.category-picker label.check { align-items: center; margin: 2px 0; white-space: nowrap; }
+.category-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.category-chips button {
+  display: flex; align-items: center; gap: 5px; font: inherit; font-size: 12px;
+  padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-alt); color: var(--text); cursor: pointer;
+}
+.category-chips button[aria-current="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.category-list { margin: 6px 0 10px; }
+.category-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.category-row .category-name { flex: 1; }
+.category-row button { font: inherit; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-alt); cursor: pointer; }
+#new-category input[type="color"] { width: 34px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; }
+.contact-detail h3.section { margin: 14px 0 4px; }
 
 /* --- tags ------------------------------------------------------------- */
 
