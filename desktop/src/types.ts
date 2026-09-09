@@ -61,7 +61,7 @@ export type MessageTags = {
   user: Label[];
 };
 
-export type TrashReason = "deleted" | "expired" | "unaccepted";
+export type TrashReason = "deleted" | "expired" | "unaccepted" | "blocked";
 
 export type TrashedMessage = {
   trashedAt: number;
@@ -197,3 +197,11 @@ export function accountLabel(account: Account): string {
   if (account.kind === "Unconfigured") return "Unfinished setup";
   return account.displayName || account.addr || "Unfinished setup";
 }
+
+/** One entry in the blocklist: an address, or `@example.com` for a domain. */
+export type BlocklistEntry = {
+  id: number;
+  pattern: string;
+  added: number;
+  reason: string;
+};

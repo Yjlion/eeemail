@@ -153,6 +153,15 @@ simply that **no chatmail relay provisioning code is reachable by default**. If
 upstream restructures the `DCACCOUNT:` path, re-derive the gates from that
 intent rather than trying to replay this diff.
 
+| `core/src/sql/migrations.rs` | Migration 172: `CREATE TABLE blocklist`. | Addresses and domains whose mail is rejected on arrival. Its own table rather than `contacts.blocked`, because a blocklist has to hold a pattern for somebody who has no contact row yet -- rejecting a stranger's mail is the point, and a stranger has not written. | [0027](adr/0027-a-blocklist-that-trashes-on-arrival.md) |
+| `core/src/config.rs` | Added `Config::EmailSignature` and `Config::EmailSignatureHtml`, both with **no** `#[strum(props(default))]`. | The outgoing signature. Deliberately not `Selfstatus`, which is also a contact's *status* and is shown on their profile. No compile-time default because unset means no signature, which is what an account that has never been told otherwise should have. | [0025](adr/0025-composed-html.md) |
+| `core/src/config.rs` | Added both signature keys to the `is_synced()` `matches!`. | A signature is a preference about how this person's mail looks, not about this device, so it follows them to their other clients exactly as `Selfstatus` does. Neither is a file path, which is the exfiltration case that list guards against. | [0025](adr/0025-composed-html.md) |
+| `core/src/context.rs` | Two `get_info` entries reporting **whether** a signature is set, not its text. | `test_get_info_completeness` fails without an entry per key. The value is withheld on purpose: `get_info` is what a bug report pastes, and a signature carries a name, an employer and a phone number. | [0025](adr/0025-composed-html.md) |
+| `core/src/mimefactory.rs` | An `email_signature` field loaded under the same `attach_profile_data` gate as `selfstatus`; the footer picks it over `selfstatus` when set; the `text/html` alternative gets it appended. | A signature is profile data, so a message not carrying the user's status is not one they are writing. It *displaces* the status rather than joining it -- only one block can follow the `-- ` separator. Absent when unset, so an account with no signature emits byte-identical MIME to upstream. | [0025](adr/0025-composed-html.md) |
+| `core/src/receive_imf.rs` | One more call in the existing best-effort block: `email::blocklist::apply`. | Trashes a message whose sender is blocked. **After `gating::apply`, and the order is the point**: gating decides whether a stranger's mail waits in `Unverified`, this decides whether it belongs in the mailbox at all, so it has the last word. No new patch site. | [0027](adr/0027-a-blocklist-that-trashes-on-arrival.md) |
+| `core/deltachat-jsonrpc/src/api.rs` | A fourth eeemail block: `get_blocklist`, `add_to_blocklist`, `remove_from_blocklist`, `block_sender`, `unblock_sender`. | `block_sender` is deliberately *not* upstream's `block_contact`: it writes the contact row and the blocklist row together, because a caller that does one of them has a feature that looks like it works. On conflict, re-place the block rather than replaying the diff. | [0027](adr/0027-a-blocklist-that-trashes-on-arrival.md) |
+| `core/deltachat-jsonrpc/src/api/types/email.rs` | `JsonrpcBlocklistEntry`, and a `Blocked` variant on `JsonrpcTrashReason`. | The blocklist over the wire. The reason variant is a fourth trash reason; adding a fifth means this file, `email/ephemeral.rs`, `desktop/src/types.ts` and the reading pane's notice. | [0027](adr/0027-a-blocklist-that-trashes-on-arrival.md) |
+
 ## New files (not upstream, no merge risk)
 
 | File | Purpose | ADR |
@@ -167,6 +176,8 @@ intent rather than trying to replay this diff.
 | `core/src/email/compose.rs` | Per-message recipient sets on the wire: Cc and Bcc | [0014](adr/0014-recipient-sets-on-the-wire.md) |
 | `core/src/email/autocrypt.rs` | Key-contact from an incoming `Autocrypt:` header, so opportunistic encryption can start | [0021](adr/0021-autocrypt-key-contacts.md) |
 | `core/src/email/structured.rs` | SML / Schema.org-for-Email extraction with a trust verdict | [0016](adr/0016-structured-email.md) |
+| `core/src/email/signature.rs` | The signature appended to outgoing mail, in both alternatives | [0025](adr/0025-composed-html.md) |
+| `core/src/email/blocklist.rs` | Addresses and domains whose mail is trashed on arrival | [0027](adr/0027-a-blocklist-that-trashes-on-arrival.md) |
 | `core/src/email/vault.rs` | At-rest protection reporting | [0015](adr/0015-at-rest-and-backup.md) |
 | `core/src/email/backup.rs` | Encrypted backup with staleness tracking | [0015](adr/0015-at-rest-and-backup.md) |
 | `core/deltachat-jsonrpc/src/api/types/email.rs` | JSON-RPC types for the email layer | [0012](adr/0012-rpc-and-cli.md) |

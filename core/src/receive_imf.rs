@@ -1054,6 +1054,16 @@ UPDATE msgs SET state=? WHERE
             .context("failed to apply inbox gating")
             .log_err(context)
             .ok();
+        // After gating, and so with the last word on where this message goes:
+        // gating decides whether a stranger's mail waits in `Unverified`, and
+        // this decides whether it belongs in the mailbox at all. A blocked
+        // sender who is also a stranger ends up in `Trash`, which is what
+        // blocking them meant.
+        crate::email::blocklist::apply(context, msg_id)
+            .await
+            .context("failed to apply the blocklist")
+            .log_err(context)
+            .ok();
         // After gating, so the stored trust verdict agrees with where the
         // message actually landed.
         crate::email::structured::store(context, msg_id, &mime_parser, imf_raw)

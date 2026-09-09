@@ -52,8 +52,8 @@ use types::calls::JsonrpcCallInfo;
 use types::chat::FullChat;
 use types::contact::{ContactObject, VcardContact};
 use types::email::{
-    JsonrpcBackupStatus, JsonrpcEncryptionMode, JsonrpcLabel, JsonrpcMdnPolicy,
-    JsonrpcMessageCrypto, JsonrpcMessageRow, JsonrpcProtection, JsonrpcRecipient,
+    JsonrpcBackupStatus, JsonrpcBlocklistEntry, JsonrpcEncryptionMode, JsonrpcLabel,
+    JsonrpcMdnPolicy, JsonrpcMessageCrypto, JsonrpcMessageRow, JsonrpcProtection, JsonrpcRecipient,
     JsonrpcRecipientSet, JsonrpcSearchQuery, JsonrpcServerRetention, JsonrpcStructuredObject,
     JsonrpcSystemTag, JsonrpcTags, JsonrpcThreadItem, JsonrpcTrashed, flatten_thread,
 };
@@ -3374,6 +3374,55 @@ impl CommandApi {
         let ctx = self.get_context(account_id).await?;
         let released = email::gating::release(&ctx, &[ContactId::new(contact_id)]).await?;
         Ok(u32::try_from(released).unwrap_or(u32::MAX))
+    }
+
+    // --- eeemail: the blocklist -------------------------------------------
+
+    /// Every blocklist entry, most recently added first.
+    async fn get_blocklist(&self, account_id: u32) -> Result<Vec<JsonrpcBlocklistEntry>> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::blocklist::list(&ctx)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// Adds a pattern: an address, or `@example.com` for a whole domain.
+    ///
+    /// Errors on a pattern that could never match an address, rather than
+    /// storing one the user would believe was protecting them. A domain
+    /// pattern matches that domain exactly and not its subdomains.
+    async fn add_to_blocklist(
+        &self,
+        account_id: u32,
+        pattern: String,
+        reason: Option<String>,
+    ) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::blocklist::add(&ctx, &pattern, reason.as_deref().unwrap_or_default()).await
+    }
+
+    /// Removes a pattern. Removing one that is not there is not an error.
+    async fn remove_from_blocklist(&self, account_id: u32, pattern: String) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::blocklist::remove(&ctx, &pattern).await
+    }
+
+    /// Blocks a contact: the contact row *and* the blocklist entry.
+    ///
+    /// Not `block_contact`, which is upstream's and does only the first half.
+    /// A blocked contact whose mail still arrives is the behaviour this
+    /// replaces; the two writes travel together so no caller can do one.
+    async fn block_sender(&self, account_id: u32, contact_id: u32) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::blocklist::block_contact(&ctx, ContactId::new(contact_id)).await
+    }
+
+    /// Unblocks a contact: the contact row and the blocklist entry.
+    async fn unblock_sender(&self, account_id: u32, contact_id: u32) -> Result<()> {
+        let ctx = self.get_context(account_id).await?;
+        email::blocklist::unblock_contact(&ctx, ContactId::new(contact_id)).await
     }
 
     /// Throws messages away: they stay readable and restorable until purged.

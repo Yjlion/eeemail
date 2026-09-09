@@ -533,6 +533,11 @@ export class DemoRpc {
       }
       case "get_contact":
         return CONTACTS.find((c) => c.id === arg<number>(1)) ?? null;
+      case "get_blocklist":
+        return [
+          { id: 1, pattern: "@offers.example", added: NOW - 9 * DAY, reason: "" },
+          { id: 2, pattern: "noreply@loud.example", added: NOW - 30 * DAY, reason: "" },
+        ];
       case "get_contact_encryption_info":
         return "End-to-end encryption available.\nFingerprint: DEMO 0000 1111 2222 3333";
       case "get_chat_securejoin_qr_code":
@@ -562,7 +567,11 @@ export class DemoRpc {
       case "get_ephemeral_default":
         return 0;
       case "get_config":
-        return null;
+        // Only the keys the UI reads back into a field. Everything else is a
+        // write the demo accepts and forgets, per the note below.
+        return arg<string>(1) === "email_signature"
+          ? "Ada Lovelace\nAnalytical Engines, London"
+          : null;
 
       // Everything that writes is accepted and forgotten: a demo that pretended
       // to send mail would be lying about the one thing that matters.

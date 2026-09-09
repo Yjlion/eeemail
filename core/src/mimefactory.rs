@@ -133,6 +133,14 @@ pub struct MimeFactory {
     /// addressees of its own beyond its chat. See `crate::email::compose`.
     cc: Vec<(String, String)>,
 
+    /// eeemail: the signature to append, or `None` when none is configured.
+    ///
+    /// Takes the place of `selfstatus` in the footer when both are set: only
+    /// one block can be last. `None` on every account that has never set one,
+    /// which is what keeps an ordinary message byte-identical to upstream's.
+    /// See `crate::email::signature`.
+    email_signature: Option<crate::email::signature::Signature>,
+
     /// Vector of pairs of past group member names and addresses.
     past_members: Vec<(String, String)>,
 
@@ -874,6 +882,13 @@ impl MimeFactory {
                 .unwrap_or_default(),
             false => "".to_string(),
         };
+        // eeemail: under the same gate as `selfstatus`. A signature is profile
+        // data, and a message that is not carrying the user's status is not
+        // one the user is writing.
+        let email_signature = match attach_profile_data {
+            true => crate::email::signature::load(context).await?,
+            false => None,
+        };
         // We don't display avatars for address-contacts, so sending avatars w/o encryption is not
         // useful and causes e.g. Outlook to reject a message with a big header, see
         // https://support.delta.chat/t/invalid-mime-content-single-text-value-size-32822-exceeded-allowed-maximum-32768-for-the-chat-user-avatar-header/4067.
@@ -894,6 +909,7 @@ impl MimeFactory {
             from_displayname,
             sender_displayname,
             selfstatus,
+            email_signature,
             recipients,
             encryption,
             to,
@@ -947,6 +963,7 @@ impl MimeFactory {
             from_displayname: "".to_string(),
             sender_displayname: None,
             selfstatus: "".to_string(),
+            email_signature: None,
             recipients,
             encryption,
             to: vec![("".to_string(), contact.get_addr().to_string())],
@@ -2119,7 +2136,14 @@ impl MimeFactory {
 
         let is_reaction = msg.param.get_int(Param::Reaction).unwrap_or_default() != 0;
 
-        let footer = if is_reaction { "" } else { &self.selfstatus };
+        // eeemail: the signature displaces the status when both are set. Only
+        // one block can follow the `-- ` separator, and a signature is the one
+        // the user wrote for this purpose.
+        let footer = match (is_reaction, &self.email_signature) {
+            (true, _) => "",
+            (false, Some(signature)) => &signature.plain,
+            (false, None) => &self.selfstatus,
+        };
 
         let message_text = if self.pre_message_mode == PreMessageMode::Post {
             "".to_string()
@@ -2164,6 +2188,16 @@ impl MimeFactory {
                 None
             };
             if let Some(html) = html {
+                // eeemail: the signature goes in both parts. The plain part is
+                // never optional, and it is also not the part most recipients
+                // are shown -- a signature in only one of them is missing
+                // exactly where the user was looking.
+                let html = match (is_reaction, &self.email_signature) {
+                    (false, Some(signature)) => {
+                        crate::email::signature::append_to_html(&html, signature)
+                    }
+                    _ => html,
+                };
                 main_part = MimePart::new(
                     "multipart/alternative",
                     vec![main_part, MimePart::new("text/html", html)],

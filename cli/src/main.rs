@@ -52,6 +52,9 @@ Gating and the trash
   gating set <on|off>           turn inbox gating on or off
   gating days <n>               days before unverified mail is swept to trash
   release <contact-id>          release a contact's held mail
+  blocklist                     addresses and domains whose mail is rejected
+  blocklist add <pattern>       block `spam@example.com` or `@example.com`
+  blocklist remove <pattern>    stop blocking a pattern
   trash <msg-id>                throw a message away, recoverably
   restore <msg-id>              take a message back out of the trash
   ephemeral get <msg-id>        when this message expires, if ever
@@ -72,6 +75,8 @@ Policy
   encryption set <mode>         set the global encryption mode
   receipts get                  never | verified-only | always
   receipts set <policy>         set who gets read receipts
+  signature get                 the signature appended to outgoing mail
+  signature set <text>          set it; an empty string removes it
 ";
 
 #[tokio::main(flavor = "multi_thread")]
@@ -329,6 +334,41 @@ async fn dispatch(ctx: &Context, command: &str, args: &[&str]) -> Result<Value> 
             };
             email::gating::set_enabled(ctx, enabled).await?;
             Ok(json!({ "enabled": enabled }))
+        }
+        ("blocklist", []) => Ok(json!({
+            "entries": email::blocklist::list(ctx)
+                .await?
+                .into_iter()
+                .map(|e| json!({
+                    "id": e.id,
+                    "pattern": e.pattern,
+                    "added": e.added,
+                    "reason": e.reason,
+                }))
+                .collect::<Vec<_>>(),
+        })),
+        ("blocklist", ["add", pattern]) => {
+            email::blocklist::add(ctx, pattern, "").await?;
+            Ok(json!({ "blocked": pattern }))
+        }
+        ("blocklist", ["remove", pattern]) => {
+            email::blocklist::remove(ctx, pattern).await?;
+            Ok(json!({ "unblocked": pattern }))
+        }
+        ("signature", ["get"]) => {
+            let signature = email::signature::load(ctx).await?;
+            Ok(json!({
+                "plain": signature.as_ref().map(|s| s.plain.clone()),
+                "html": signature.as_ref().map(|s| s.html.clone()),
+            }))
+        }
+        ("signature", ["set", text]) => {
+            ctx.set_config(
+                deltachat::config::Config::EmailSignature,
+                Some(*text).filter(|t| !t.is_empty()),
+            )
+            .await?;
+            Ok(json!({ "plain": email::signature::load(ctx).await?.map(|s| s.plain) }))
         }
         ("release", [id]) => {
             let contact_id = deltachat::contact::ContactId::new(

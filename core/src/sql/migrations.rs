@@ -2850,6 +2850,33 @@ UPDATE msgs SET state=24 WHERE state=18; -- Change OutPreparing to OutFailed.
         .await?;
     }
 
+    // eeemail: addresses and domains whose mail is rejected on arrival.
+    // docs/adr/0027-a-blocklist-that-trashes-on-arrival.md
+    inc_and_check(&mut migration_version, 172)?;
+    if dbversion < migration_version {
+        sql.execute_migration(
+            // Its own table rather than `contacts.blocked`, because a blocklist
+            // has to hold a pattern for somebody who has no contact row: the
+            // whole point is to reject mail from a stranger, and a stranger by
+            // definition has not written yet. `contacts.blocked` stays what it
+            // is and is set alongside this, for a pattern that names a contact.
+            //
+            // `pattern_norm` is the lowercased form and carries the uniqueness,
+            // for the same reason `labels.name_norm` does: a blocklist that
+            // holds both `Spam@Example.com` and `spam@example.com` is a
+            // blocklist with a hole in it.
+            "CREATE TABLE blocklist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern TEXT NOT NULL, -- as the user typed it
+                pattern_norm TEXT NOT NULL UNIQUE, -- lowercased; `@domain` for a domain
+                added INTEGER NOT NULL,
+                reason TEXT NOT NULL DEFAULT ''
+            ) STRICT;",
+            migration_version,
+        )
+        .await?;
+    }
+
     let new_version = sql
         .get_raw_config_int(VERSION_CFG)
         .await?

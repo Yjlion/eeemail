@@ -1103,6 +1103,23 @@ impl Context {
                 .await?
                 .to_string(),
         );
+        // Whether one is set, not what it says. `get_info` is what a bug report
+        // pastes, and a signature carries a name, an employer and a phone
+        // number that nobody meant to attach to a diagnostic.
+        res.insert(
+            "email_signature",
+            self.get_config_opt(Config::EmailSignature)
+                .await?
+                .is_some_and(|s| !s.is_empty())
+                .to_string(),
+        );
+        res.insert(
+            "email_signature_html",
+            self.get_config_opt(Config::EmailSignatureHtml)
+                .await?
+                .is_some_and(|s| !s.is_empty())
+                .to_string(),
+        );
         res.insert(
             "force_encryption",
             self.get_config_bool(Config::ForceEncryption)

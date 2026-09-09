@@ -56,6 +56,7 @@ export function itemsFor(target: Target): MenuItem[] {
 
   items.push(null);
   items.push({ label: "Tags…", act: "tags" });
+  items.push({ label: "Block sender…", act: "block-sender", danger: true });
   items.push(null);
   items.push({
     label: "View source",
@@ -121,6 +122,22 @@ export async function run(act: string, msgId: number): Promise<boolean> {
       // A tag change can move the message out of the view listing it, so the
       // list is re-read only when something was actually applied or removed.
       return await showTagPicker(msgId);
+    }
+
+    case "block-sender": {
+      const msg = (await rpc.call("get_message", [account, msgId])) as Message;
+      const contact = (await rpc.call("get_contact", [account, msg.fromId])) as Contact;
+      if (
+        !window.confirm(
+          `Block ${contact.displayName || contact.address}?\n\n` +
+            "Mail from them is moved straight to the trash from now on. This " +
+            "message and anything else they have already sent stays where it is.",
+        )
+      ) {
+        return false;
+      }
+      await rpc.call("block_sender", [account, msg.fromId]);
+      return true;
     }
 
     case "add-contact":

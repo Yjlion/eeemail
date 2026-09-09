@@ -111,7 +111,9 @@ export async function renderReading(el: HTMLElement): Promise<void> {
              ? "This message's timer expired."
              : trashed.reason === "unaccepted"
                ? "This came from a sender you never accepted, and waited in Unverified until its window ran out."
-               : "You moved this message to the trash."
+               : trashed.reason === "blocked"
+                 ? "This came from a blocked sender, so it was moved here on arrival rather than into your inbox."
+                 : "You moved this message to the trash."
          }
          It is still here for ${days(now, trashed.purgeAt)} more days.
          <button class="inline" data-act="restore">Restore</button>

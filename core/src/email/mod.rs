@@ -8,6 +8,7 @@
 pub mod autocrypt;
 pub mod backup;
 pub mod blobcrypt;
+pub mod blocklist;
 pub mod compose;
 pub mod ephemeral;
 pub mod gating;
@@ -17,6 +18,7 @@ pub mod rawmime;
 pub mod receipts;
 pub mod recipients;
 pub mod search;
+pub mod signature;
 pub mod structured;
 pub mod tags;
 pub mod threading;

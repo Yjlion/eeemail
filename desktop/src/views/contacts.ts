@@ -21,7 +21,7 @@ import { rpc } from "../client";
 import { state, changed } from "../state";
 import { escapeHtml } from "../html";
 import { when } from "./list";
-import type { Contact } from "../types";
+import type { BlocklistEntry, Contact } from "../types";
 
 /**
  * `DC_GCL_ADDRESS`: include address-contacts, not only key-contacts.
@@ -33,6 +33,7 @@ import type { Contact } from "../types";
 const GCL_ADDRESS = 0x400;
 
 let contacts: Contact[] = [];
+let blocked: BlocklistEntry[] = [];
 let qrSvg: string | null = null;
 let query = "";
 
@@ -45,6 +46,7 @@ let query = "";
  */
 export function resetContactsCache(): void {
   contacts = [];
+  blocked = [];
   qrSvg = null;
   query = "";
 }
@@ -57,6 +59,7 @@ async function load(): Promise<void> {
     GCL_ADDRESS,
     query.trim() || null,
   ])) as Contact[];
+  blocked = (await rpc.call("get_blocklist", [state.accountId])) as BlocklistEntry[];
   if (qrSvg === null) {
     try {
       const code = (await rpc.call("get_chat_securejoin_qr_code", [
@@ -103,6 +106,9 @@ function detail(c: Contact): string {
       </form>
 
       <div class="contact-actions">
+        <button data-act="${c.isBlocked ? "unblock" : "block"}">
+          ${c.isBlocked ? "Unblock" : "Block"}
+        </button>
         <button data-act="release">Release held mail</button>
         <button data-act="encryption-info">Encryption details</button>
         <button data-act="delete" class="danger">Delete contact</button>
@@ -164,6 +170,37 @@ export async function renderContacts(el: HTMLElement): Promise<void> {
           ${current ? detail(current) : `<div class="empty small">Pick somebody to see their details.</div>`}
         </div>
       </div>
+
+      <h2 class="section">Blocked (${blocked.length})</h2>
+      <p class="hint">
+        Mail from these senders is moved straight to the trash on arrival, where
+        it waits out the usual window before being destroyed. Blocking somebody
+        does not touch mail they already sent you.
+      </p>
+      <div class="blocklist">
+        ${
+          blocked.length
+            ? blocked
+                .map(
+                  (b) => `
+          <div class="block-row">
+            <code>${escapeHtml(b.pattern)}</code>
+            <button data-act="unblock-pattern" data-pattern="${escapeHtml(b.pattern)}">
+              Remove
+            </button>
+          </div>`,
+                )
+                .join("")
+            : `<div class="empty small">Nobody</div>`
+        }
+      </div>
+      <form id="block-form" class="inline-form">
+        <label>Block an address or a domain
+          <input name="pattern" placeholder="spam@example.com or @example.com"
+                 autocomplete="off" required />
+        </label>
+        <button type="submit">Block</button>
+      </form>
 
       <details class="qr-block">
         <summary>Your invite code</summary>
@@ -327,6 +364,61 @@ export async function renderContacts(el: HTMLElement): Promise<void> {
       }
     },
   );
+
+  for (const which of ["block", "unblock"] as const) {
+    detailEl?.querySelector<HTMLButtonElement>(`[data-act='${which}']`)?.addEventListener(
+      "click",
+      async () => {
+        if (!current) return;
+        try {
+          // `block_sender`, not upstream's `block_contact`. The latter marks
+          // the contact row and leaves the mail arriving, which is the
+          // behaviour this replaces; the eeemail call does both halves so no
+          // caller can do one of them.
+          await rpc.call(which === "block" ? "block_sender" : "unblock_sender", [
+            state.accountId,
+            current.id,
+          ]);
+          // A blocked contact drops out of `get_contacts`, which filters them,
+          // so the selection has nothing left to point at.
+          if (which === "block") state.selectedContactId = null;
+          await renderContacts(el);
+        } catch (err) {
+          fail(err);
+        }
+      },
+    );
+  }
+
+  el.querySelector<HTMLFormElement>("#block-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.hidden = true;
+    const form = event.target as HTMLFormElement;
+    try {
+      await rpc.call("add_to_blocklist", [
+        state.accountId,
+        (form.elements.namedItem("pattern") as HTMLInputElement).value.trim(),
+        null,
+      ]);
+      await renderContacts(el);
+    } catch (err) {
+      // The engine refuses a pattern that could never match an address, and
+      // saying so is the point -- an entry that silently never fires is one
+      // the user believes is protecting them.
+      fail(err);
+    }
+  });
+
+  for (const button of el.querySelectorAll<HTMLButtonElement>("[data-act='unblock-pattern']")) {
+    button.addEventListener("click", async () => {
+      try {
+        await rpc.call("remove_from_blocklist", [state.accountId, button.dataset["pattern"]]);
+        await renderContacts(el);
+      } catch (err) {
+        fail(err);
+      }
+    });
+  }
 
   el.querySelector<HTMLFormElement>("#add-contact")?.addEventListener("submit", async (event) => {
     event.preventDefault();

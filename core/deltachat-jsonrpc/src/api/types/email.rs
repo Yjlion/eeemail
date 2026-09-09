@@ -6,6 +6,7 @@
 //! to one `impl` block; keeping the types out here holds the upstream diff to
 //! thin wrappers. See `docs/fork-patches.md`.
 
+use deltachat::email::blocklist::Entry as BlocklistEntry;
 use deltachat::email::ephemeral::{Reason, Trashed};
 use deltachat::email::labels::Label;
 use deltachat::email::policy::{EncryptionMode, MessageCrypto, ServerRetention};
@@ -82,6 +83,31 @@ impl From<Label> for JsonrpcLabel {
             name: l.name,
             color: l.color.map(super::color_int_to_hex_string),
             is_system: l.is_system,
+        }
+    }
+}
+
+/// One blocklist entry as the user sees it.
+#[derive(Serialize, TypeDef, schemars::JsonSchema)]
+#[serde(rename = "BlocklistEntry", rename_all = "camelCase")]
+pub struct JsonrpcBlocklistEntry {
+    /// Local row id, so a client can remove one without echoing the text back.
+    pub id: i64,
+    /// The pattern as the user typed it: an address, or `@example.com`.
+    pub pattern: String,
+    /// Unix timestamp when it was added.
+    pub added: i64,
+    /// Why, if the user said. Never interpreted.
+    pub reason: String,
+}
+
+impl From<BlocklistEntry> for JsonrpcBlocklistEntry {
+    fn from(e: BlocklistEntry) -> Self {
+        Self {
+            id: e.id,
+            pattern: e.pattern,
+            added: e.added,
+            reason: e.reason,
         }
     }
 }
@@ -439,6 +465,8 @@ pub enum JsonrpcTrashReason {
     Expired,
     /// It was held from an unverified sender and never accepted.
     Unaccepted,
+    /// Its sender is on the blocklist.
+    Blocked,
 }
 
 /// What the trash knows about a message.
@@ -462,6 +490,7 @@ impl From<Trashed> for JsonrpcTrashed {
                 Reason::Deleted => JsonrpcTrashReason::Deleted,
                 Reason::Expired => JsonrpcTrashReason::Expired,
                 Reason::Unaccepted => JsonrpcTrashReason::Unaccepted,
+                Reason::Blocked => JsonrpcTrashReason::Blocked,
             },
         }
     }

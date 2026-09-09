@@ -16,8 +16,18 @@ import type { AtRestProtection, EncryptionMode, MdnPolicy } from "../types";
 
 export async function renderSettings(el: HTMLElement): Promise<void> {
   const account = state.accountId;
-  const [protection, encryption, mdn, gating, holdDays, purgeDays, ephemeral, blobs] =
-    (await Promise.all([
+  const [
+    protection,
+    encryption,
+    mdn,
+    gating,
+    holdDays,
+    purgeDays,
+    ephemeral,
+    blobs,
+    signature,
+    signatureHtml,
+  ] = (await Promise.all([
       rpc.call("get_at_rest_protection", [account]),
       rpc.call("get_encryption_mode", [account]),
       rpc.call("get_mdn_policy", [account]),
@@ -26,6 +36,11 @@ export async function renderSettings(el: HTMLElement): Promise<void> {
       rpc.call("get_trash_purge_days", [account]),
       rpc.call("get_ephemeral_default", [account]),
       rpc.call("get_blob_encryption", [account]),
+      // Read through the generic config accessor rather than a dedicated RPC:
+      // a signature is a string the engine stores and does not interpret, and
+      // a method per string is surface for nothing.
+      rpc.call("get_config", [account, "email_signature"]),
+      rpc.call("get_config", [account, "email_signature_html"]),
     ])) as [
       AtRestProtection,
       EncryptionMode,
@@ -35,6 +50,8 @@ export async function renderSettings(el: HTMLElement): Promise<void> {
       number,
       number,
       boolean,
+      string | null,
+      string | null,
     ];
 
   const option = (value: string, label: string, current: string) =>
@@ -164,6 +181,39 @@ export async function renderSettings(el: HTMLElement): Promise<void> {
       </section>
 
       <section>
+        <h2 class="section">Signature</h2>
+        <p class="hint">
+          Appended to every message you send, after the standard
+          <code>--&nbsp;</code> separator that tells other mail clients where
+          your message ends and your signature begins. Leave it empty for none.
+        </p>
+        <form id="signature-form">
+          <label>Signature
+            <textarea name="signature" rows="4"
+                      placeholder="Ada Lovelace&#10;Analytical Engines">${escapeHtml(
+                        signature ?? "",
+                      )}</textarea>
+          </label>
+          <details>
+            <summary>Formatted version</summary>
+            <p class="hint">
+              Optional. Used in the HTML part of a formatted message; without
+              it the plain signature is shown there as typed. The plain one is
+              always sent as well, because a message must be readable to
+              someone whose client shows plain text.
+            </p>
+            <label>HTML
+              <textarea name="signatureHtml" rows="3"
+                        placeholder="&lt;p&gt;&lt;b&gt;Ada Lovelace&lt;/b&gt;&lt;/p&gt;">${escapeHtml(
+                          signatureHtml ?? "",
+                        )}</textarea>
+            </label>
+          </details>
+          <div class="actions"><button type="submit">Save signature</button></div>
+        </form>
+      </section>
+
+      <section>
         <h2 class="section">Read receipts</h2>
         <label>Send to
           <select data-set="mdn">
@@ -191,6 +241,28 @@ export async function renderSettings(el: HTMLElement): Promise<void> {
       error.textContent = err instanceof Error ? err.message : String(err);
     }
   };
+
+  // An explicit Save, not a `change` listener. A signature is written a line at
+  // a time, and a field that saved on every pause would put half-typed footers
+  // on any mail sent meanwhile.
+  el.querySelector<HTMLFormElement>("#signature-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.target as HTMLFormElement;
+    const value = (name: string) =>
+      (form.elements.namedItem(name) as HTMLTextAreaElement).value.trim() || null;
+    void guard(async () => {
+      await rpc.call("batch_set_config", [
+        account,
+        {
+          email_signature: value("signature"),
+          email_signature_html: value("signatureHtml"),
+        },
+      ]);
+      error.hidden = false;
+      error.className = "notice good";
+      error.textContent = "Signature saved.";
+    });
+  });
 
   el.querySelector<HTMLFormElement>("#passphrase-form")?.addEventListener(
     "submit",

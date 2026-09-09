@@ -233,6 +233,11 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; margin
 .tag-picker { display: flex; flex-direction: column; gap: 2px; }
 .tag-picker label.check { align-items: center; margin: 4px 0; }
 
+.blocklist { margin: 6px 0 10px; }
+.block-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.block-row code { font-size: 13px; }
+#block-form button { border-color: var(--warn-border); background: var(--warn-bg); color: var(--warn); }
+
 .qr-block { margin-top: 18px; }
 .qr { margin: 10px 0; min-height: 40px; }
 .qr svg { border: 1px solid var(--border); border-radius: 8px; }
