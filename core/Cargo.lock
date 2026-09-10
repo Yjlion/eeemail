@@ -2274,7 +2274,7 @@ dependencies = [
 
 [[package]]
 name = "eeemail-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "deltachat",
@@ -2284,7 +2284,7 @@ dependencies = [
 
 [[package]]
 name = "eeemail-desktop"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "deltachat",
