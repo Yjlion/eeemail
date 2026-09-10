@@ -3761,6 +3761,7 @@ impl CommandApi {
     /// than a `None` for the one it left out. Every caller moves together or
     /// none does -- including the three live-pass scripts in `scripts/`, which
     /// no CI job runs.
+    #[expect(clippy::too_many_arguments)]
     async fn send_email(
         &self,
         account_id: u32,
