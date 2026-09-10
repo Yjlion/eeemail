@@ -68,7 +68,18 @@ body {
   margin-left: auto; background: var(--warn-border); color: var(--warn);
   border-radius: 10px; font-size: 11px; padding: 0 7px; font-weight: 600;
 }
-.sidebar .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.sidebar .dot, .badge .dot, .tag-row .dot, .tag-picker .dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; display: inline-block;
+}
+/* Secondary entries -- "Manage tags…", "Add a mailbox…". Dimmed and smaller so
+   they read as the way to change the list above them rather than as another
+   item in it. */
+.sidebar button.quiet { font-size: 12px; color: var(--text-dim); padding-top: 4px; }
+.sidebar .account-switcher {
+  display: block; width: calc(100% - 28px); margin: 0 14px 10px; padding: 5px 8px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg);
+  font: inherit; font-size: 12px; color: var(--text);
+}
 
 /* --- list ------------------------------------------------------------ */
 
@@ -121,12 +132,14 @@ body {
 .section { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); margin: 26px 0 8px; }
 
 .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.actions button, .contact-actions button, .scan button, .add-contact button {
+.actions button, .contact-actions button, .scan button, .add-contact button,
+.tag-row button {
   font: inherit; padding: 5px 11px; border: 1px solid var(--border);
   border-radius: 6px; background: var(--bg-alt); cursor: pointer;
 }
 .actions button:hover { background: #e9ebef; }
-.actions button[type="submit"], .add-contact button, .scan button {
+.actions button[type="submit"], .add-contact button, .scan button,
+.new-tag button[type="submit"] {
   background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
 }
 .actions button[type="submit"]:disabled { opacity: .6; cursor: default; }
@@ -146,6 +159,9 @@ button.danger, .actions button.danger { color: var(--warn); border-color: var(--
 .badge.enc { color: var(--good); border-color: var(--good-border); background: var(--good-bg); }
 .badge.plain { color: var(--warn); border-color: var(--warn-border); background: var(--warn-bg); }
 .badge.verified { color: var(--accent); border-color: #bfdbfe; background: #eff6ff; }
+/* The sender's claim about their own message, so it reads as an assertion
+   rather than as something eeemail worked out. */
+.badge.important { color: #b45309; border-color: #fcd34d; background: #fffbeb; font-weight: 600; }
 .badge.warn-badge { color: var(--warn); border-color: var(--warn-border); background: var(--warn-bg); }
 
 .notice { padding: 9px 11px; border-radius: 6px; margin: 12px 0; font-size: 13px; border: 1px solid var(--border); background: var(--bg-alt); color: var(--text-dim); }
@@ -160,8 +176,11 @@ button.danger, .actions button.danger { color: var(--warn); border-color: var(--
 
 /* --- forms ------------------------------------------------------------ */
 
-.setup, .composer, .contacts, .settings { max-width: 720px; }
-.setup h1, .composer h1, .contacts h1, .settings h1 { font-size: 20px; margin: 0 0 8px; }
+.setup, .composer, .contacts, .settings, .tags { max-width: 720px; }
+/* The address book is two columns and needs the room; every other screen is a
+   single column of form rows and does not. */
+.contacts { max-width: 940px; }
+.setup h1, .composer h1, .contacts h1, .settings h1, .tags h1 { font-size: 20px; margin: 0 0 8px; }
 label { display: block; margin: 10px 0; font-size: 13px; color: var(--text-dim); }
 label input:not([type="checkbox"]), label select, textarea {
   display: block; width: 100%; margin-top: 3px; padding: 7px 9px;
@@ -174,11 +193,77 @@ label.check input { margin-top: 4px; }
 details summary { cursor: pointer; color: var(--accent); font-size: 13px; margin: 14px 0 4px; }
 .attach .hint { margin-top: 4px; }
 
-.contact { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+/* --- the address book ------------------------------------------------- */
+
+.contacts-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.contacts-list #contact-search {
+  width: 100%; padding: 7px 9px; margin: 4px 0 8px;
+  border: 1px solid var(--border); border-radius: 6px; font: inherit; color: var(--text);
+}
+/* Capped and scrolled rather than growing without limit: an address book is
+   the one list here that can be thousands of rows long. */
+.contact-rows { max-height: 380px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+
+/* A row is a button, so it is reachable by keyboard and announces itself as
+   selectable. The reset is because the shared button rule further down assumes
+   a control with a border, and a list row is not one. */
+.contact {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  width: 100%; padding: 9px 12px; text-align: left; font: inherit; color: var(--text);
+  background: none; border: 0; border-bottom: 1px solid var(--border); cursor: pointer;
+}
+.contact:last-child { border-bottom: 0; }
+.contact:hover { background: #e9ebef; }
+.contact[aria-current="true"] { background: var(--accent-soft); }
+.contact-who { display: flex; flex-direction: column; min-width: 0; }
+.contact-marks { display: flex; gap: 6px; flex-shrink: 0; }
 .contact .name { font-weight: 600; }
-.contact .addr { font-size: 12px; color: var(--text-dim); }
-.contact-actions { display: flex; gap: 8px; align-items: center; }
-.qr-block { margin-top: 8px; }
+.contact .addr { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
+.contact-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.contacts-detail { border: 1px solid var(--border); border-radius: 8px; padding: 4px 14px 14px; }
+.contact-detail h2.who { font-size: 16px; margin: 14px 0 6px; }
+.contact-detail #encryption-info { margin-top: 10px; max-height: 200px; }
+
+.phone-row { display: flex; gap: 8px; margin: 4px 0; }
+.phone-row input[name="phoneLabel"] { flex: 0 0 90px; }
+.phone-row input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font: inherit; color: var(--text); min-width: 0; }
+.phone-row input[name="phoneNumber"] { flex: 1; }
+button.quiet-add { font: inherit; font-size: 12px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-alt); cursor: pointer; }
+
+.category-picker { display: flex; flex-wrap: wrap; gap: 10px; }
+.category-picker label.check { align-items: center; margin: 2px 0; white-space: nowrap; }
+.category-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.category-chips button {
+  display: flex; align-items: center; gap: 5px; font: inherit; font-size: 12px;
+  padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-alt); color: var(--text); cursor: pointer;
+}
+.category-chips button[aria-current="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.category-list { margin: 6px 0 10px; }
+.category-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.category-row .category-name { flex: 1; }
+.category-row button { font: inherit; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-alt); cursor: pointer; }
+#new-category input[type="color"] { width: 34px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; }
+.contact-detail h3.section { margin: 14px 0 4px; }
+
+/* --- tags ------------------------------------------------------------- */
+
+.tag-row { display: flex; gap: 8px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.tag-row .tag-name { flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font: inherit; color: var(--text); }
+.tag-row input[type="color"] { width: 34px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; }
+.tag-row label.check { margin: 0; white-space: nowrap; }
+.new-tag .tag-row { border-bottom: 0; }
+.new-tag input[name="name"] { flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font: inherit; color: var(--text); }
+.tag-system { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.tag-picker { display: flex; flex-direction: column; gap: 2px; }
+.tag-picker label.check { align-items: center; margin: 4px 0; }
+
+.blocklist { margin: 6px 0 10px; }
+.block-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.block-row code { font-size: 13px; }
+#block-form button { border-color: var(--warn-border); background: var(--warn-bg); color: var(--warn); }
+
+.qr-block { margin-top: 18px; }
 .qr { margin: 10px 0; min-height: 40px; }
 .qr svg { border: 1px solid var(--border); border-radius: 8px; }
 .scan { display: flex; gap: 8px; align-items: center; }

@@ -15,12 +15,14 @@
 import { rpc, isDemo } from "./client";
 import { state, changed, onChange, applyHash } from "./state";
 import { reload, refreshConnectivity } from "./nav";
+import { loadAccounts, prepareAccount } from "./accounts";
 import { renderSidebar } from "./views/sidebar";
 import { renderList, renderListHeader } from "./views/list";
 import { renderReading } from "./views/reading";
 import { renderComposer } from "./views/composer";
 import { renderContacts } from "./views/contacts";
 import { renderSettings } from "./views/settings";
+import { renderTags } from "./views/tags";
 import { renderSetup } from "./views/setup";
 import { showFirstRun } from "./views/firstrun";
 import { firstRunPending } from "./shell";
@@ -39,24 +41,37 @@ async function boot(): Promise<void> {
 
   const ids = (await rpc.call("get_all_account_ids")) as number[];
   if (ids.length === 0) {
+    state.setupAccountId = null;
     state.screen = "setup";
     render();
     return;
   }
-  state.accountId = ids[0]!;
+
+  // The account the user left open, not whichever one happens to be first.
+  // `get_selected_account_id` returns null for a profile that was removed, so
+  // the first id stays the fallback rather than the answer.
+  const selected = (await rpc.call("get_selected_account_id")) as number | null;
+  state.accountId = selected !== null && ids.includes(selected) ? selected : ids[0]!;
+  await loadAccounts();
 
   // eeemail's defaults are applied at setup, not as compile-time defaults, so
-  // every entry point has to ask for them. See ADR 0012.
-  await rpc.call("apply_eeemail_defaults", [state.accountId]);
-
-  // On every boot, and after the defaults rather than before: the only other
-  // `start_io` in this client is in the setup form, so for eight releases the
-  // scheduler ran exactly once -- in the session that created the account. Every
-  // launch after that had no IMAP loop, fetched nothing, sent nothing queued,
-  // and so never emitted the events the rest of this function subscribes to.
-  // Safe unconditionally: the engine returns early on an unconfigured account
-  // and starting an already-started scheduler is a no-op.
-  await rpc.call("start_io", [state.accountId]);
+  // every entry point has to ask for them (ADR 0012) -- and `start_io` on every
+  // boot, because the only other `start_io` in this client is in the setup
+  // form, so for eight releases the scheduler ran exactly once, in the session
+  // that created the account. Every launch after that had no IMAP loop.
+  //
+  // For *every* account, not only the visible one: an account nobody is looking
+  // at still receives mail. Both calls are no-ops when they have nothing to do.
+  // Sequential rather than concurrent -- these open databases, and a failure on
+  // one account must not take down the boot of the others, which is what the
+  // per-account catch is for.
+  for (const id of ids) {
+    try {
+      await prepareAccount(id);
+    } catch (err) {
+      console.error(`account ${id} could not be started`, err);
+    }
+  }
   void refreshConnectivity();
 
   state.labels = (await rpc.call("get_labels", [state.accountId])) as Label[];
@@ -76,6 +91,11 @@ async function boot(): Promise<void> {
     }
     if (kind === "ConnectivityChanged") {
       void refreshConnectivity().then(changed);
+    }
+    // The account list changes when one is added, removed or reordered, and
+    // when a display name or avatar changes on one. Both redraw the switcher.
+    if (kind === "AccountsChanged" || kind === "AccountsItemChanged") {
+      void loadAccounts().then(changed);
     }
   });
 
@@ -125,6 +145,7 @@ async function paint(): Promise<void> {
       if (state.screen === "composer") renderComposer(body);
       else if (state.screen === "contacts") await renderContacts(body);
       else if (state.screen === "settings") await renderSettings(body);
+      else if (state.screen === "tags") await renderTags(body);
     } catch (err) {
       showError(body, err);
     }

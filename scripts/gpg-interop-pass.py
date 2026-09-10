@@ -388,7 +388,7 @@ def step3_outbound(rpc: Rpc, account_id: int, home: str) -> None:
     """
     msg_id = rpc.call("send_email", account_id,
                       {"to": [GPG_ADDR], "cc": [], "bcc": []},
-                      REPLY_SUBJECT, REPLY_BODY, None, None)
+                      REPLY_SUBJECT, REPLY_BODY, None, None, None)
     crypto = rpc.call("get_message_crypto", account_id, msg_id)
     check(crypto["encrypted"] is True, "we believe we encrypted the reply",
           f"got {crypto}")

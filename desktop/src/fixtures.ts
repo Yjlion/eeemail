@@ -34,6 +34,8 @@ type Row = {
   encrypted: boolean;
   verified: boolean;
   hasAttachment: boolean;
+  /** Omitted on the rows that are ordinary, which is most of them. */
+  importance?: "high" | "normal" | "low";
   tags: string[];
   body: string;
   to: string[];
@@ -63,6 +65,7 @@ const ROWS: Row[] = [
   {
     msgId: 102,
     subject: "Thursday's numbers",
+    importance: "high",
     preview: "Attaching the reconciliation. Everything balances except the",
     from: "Mira Dorn",
     fromAddr: "mira@dorn.example",
@@ -277,18 +280,92 @@ const LABELS = [
   { id: 11, name: "Reading list", color: "#15803d", isSystem: false },
 ];
 
-const CONTACTS = [
-  { id: 20, address: "ada@okonjo.example", displayName: "Ada Okonjo", isVerified: true },
-  { id: 21, address: "mira@dorn.example", displayName: "Mira Dorn", isVerified: true },
-  { id: 22, address: "tomas@reyes.example", displayName: "Tomas Reyes", isVerified: true },
-  { id: 23, address: "billing@vendor.example", displayName: "Vendor Billing", isVerified: false },
+/** Two profiles, so the switcher is drawn -- it is hidden below two. */
+const ACCOUNTS = [
   {
-    id: 24,
-    address: "unknown@elsewhere.example",
-    displayName: "unknown@elsewhere.example",
-    isVerified: false,
+    kind: "Configured",
+    id: 1,
+    addr: "you@example.org",
+    displayName: "You",
+    profileImage: null,
+    color: "#2563eb",
+    privateTag: null,
+  },
+  {
+    kind: "Configured",
+    id: 2,
+    addr: "you@work.example",
+    displayName: null,
+    profileImage: null,
+    color: "#15803d",
+    privateTag: "Work",
   },
 ];
+
+const contact = (
+  id: number,
+  address: string,
+  name: string,
+  isVerified: boolean,
+  extra: Partial<{ isBlocked: boolean; isKeyContact: boolean; e2eeAvail: boolean; lastSeen: number }> = {},
+) => ({
+  id,
+  address,
+  name,
+  displayName: name || address,
+  nameAndAddr: name ? `${name} (${address})` : address,
+  isVerified,
+  isBlocked: false,
+  isKeyContact: isVerified,
+  e2eeAvail: isVerified,
+  // A fixed offset from the pinned `NOW`, never the wall clock: a screenshot
+  // that renders a real timestamp changes on a run that changed no code.
+  lastSeen: NOW - 3 * DAY,
+  color: "#2563eb",
+  ...extra,
+});
+
+const CONTACTS = [
+  contact(20, "ada@okonjo.example", "Ada Okonjo", true),
+  contact(21, "mira@dorn.example", "Mira Dorn", true),
+  contact(22, "tomas@reyes.example", "Tomas Reyes", true),
+  contact(23, "billing@vendor.example", "Vendor Billing", false, { isKeyContact: false }),
+  contact(24, "unknown@elsewhere.example", "", false, { isKeyContact: false }),
+];
+
+const CONTACT_CATEGORIES = [
+  { id: 1, name: "Work", color: "#2563eb" },
+  { id: 2, name: "Family", color: "#15803d" },
+];
+
+/** Which categories each demo contact is in. */
+const CONTACT_CATEGORIES_OF: Record<number, number[]> = {
+  20: [1],
+  21: [1],
+  22: [2],
+};
+
+/** Records for the contacts that have one; the rest read as empty. */
+const CONTACT_DETAILS: Record<
+  number,
+  {
+    organisation: string;
+    jobTitle: string;
+    postal: string;
+    website: string;
+    notes: string;
+    phones: { label: string; number: string }[];
+  }
+> = {
+  20: {
+    organisation: "Analytical Engines",
+    jobTitle: "Programmer",
+    postal: "12 Marylebone Road\nLondon",
+    website: "https://example.com",
+    notes: "Met at the exhibition.",
+    phones: [{ label: "work", number: "+44 20 7946 0000" }],
+  },
+};
 
 /** A recognisable but meaningless QR, so the screenshot shows the real layout. */
 function demoQrSvg(): string {
@@ -329,7 +406,13 @@ export class DemoRpc {
 
     switch (method) {
       case "get_all_account_ids":
-        return [1];
+        return ACCOUNTS.map((a) => a.id);
+      case "get_all_accounts":
+        return ACCOUNTS;
+      case "get_selected_account_id":
+        return 1;
+      case "get_connectivity":
+        return 4000;
       case "apply_eeemail_defaults":
         return null;
       case "get_labels":
@@ -475,8 +558,64 @@ export class DemoRpc {
         ];
 
       case "get_contacts":
-      case "get_contacts_by_ids":
-        return CONTACTS;
+      case "get_contacts_by_ids": {
+        // The engine filters server-side on this parameter, so the demo has to
+        // as well or the search box appears to do nothing.
+        const q = (arg<string | null>(2) ?? "").trim().toLowerCase();
+        if (!q) return CONTACTS;
+        return CONTACTS.filter(
+          (c) =>
+            c.address.toLowerCase().includes(q) || c.displayName.toLowerCase().includes(q),
+        );
+      }
+      case "get_contact":
+        return CONTACTS.find((c) => c.id === arg<number>(1)) ?? null;
+      case "search_contacts": {
+        // The engine filters server-side, so the demo has to as well or the
+        // search box appears to do nothing.
+        const q = (arg<string>(1) ?? "").trim().toLowerCase();
+        const category = arg<number | null>(2);
+        let out = CONTACTS;
+        if (category !== null && category !== undefined) {
+          out = out.filter((c) => (CONTACT_CATEGORIES_OF[c.id] ?? []).includes(category));
+        }
+        if (q) {
+          out = out.filter(
+            (c) =>
+              c.address.toLowerCase().includes(q) ||
+              c.displayName.toLowerCase().includes(q) ||
+              (CONTACT_DETAILS[c.id]?.organisation ?? "").toLowerCase().includes(q) ||
+              (CONTACT_DETAILS[c.id]?.notes ?? "").toLowerCase().includes(q),
+          );
+        }
+        return out;
+      }
+      case "get_message_importance":
+        return rowOf(arg<number>(1))?.importance ?? "normal";
+      case "get_contact_details":
+        return (
+          CONTACT_DETAILS[arg<number>(1)] ?? {
+            organisation: "",
+            jobTitle: "",
+            postal: "",
+            website: "",
+            notes: "",
+            phones: [],
+          }
+        );
+      case "get_contact_categories":
+        return CONTACT_CATEGORIES;
+      case "get_contact_categories_of":
+        return (CONTACT_CATEGORIES_OF[arg<number>(1)] ?? []).map(
+          (id) => CONTACT_CATEGORIES.find((c) => c.id === id)!,
+        );
+      case "get_blocklist":
+        return [
+          { id: 1, pattern: "@offers.example", added: NOW - 9 * DAY, reason: "" },
+          { id: 2, pattern: "noreply@loud.example", added: NOW - 30 * DAY, reason: "" },
+        ];
+      case "get_contact_encryption_info":
+        return "End-to-end encryption available.\nFingerprint: DEMO 0000 1111 2222 3333";
       case "get_chat_securejoin_qr_code":
         return "OPENPGP4FPR:DEMO#a=you%40example.org&n=You&i=demo&s=demo";
       case "create_qr_svg":
@@ -504,7 +643,11 @@ export class DemoRpc {
       case "get_ephemeral_default":
         return 0;
       case "get_config":
-        return null;
+        // Only the keys the UI reads back into a field. Everything else is a
+        // write the demo accepts and forgets, per the note below.
+        return arg<string>(1) === "email_signature"
+          ? "Ada Lovelace\nAnalytical Engines, London"
+          : null;
 
       // Everything that writes is accepted and forgotten: a demo that pretended
       // to send mail would be lying about the one thing that matters.

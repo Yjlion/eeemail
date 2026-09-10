@@ -564,6 +564,33 @@ pub enum Config {
     #[strum(props(default = "1"))]
     SubjectInBody,
 
+    /// eeemail: the signature appended to outgoing mail, as plain text.
+    ///
+    /// Distinct from [`Config::Selfstatus`] on purpose. `Selfstatus` is also a
+    /// contact's *status*, shown on their profile and stored on their contact
+    /// row when it arrives -- so reusing it would put a five-line work
+    /// signature where a one-line status belongs, in both directions. An email
+    /// client has signatures; a messenger has statuses; they are not the same
+    /// field wearing different names.
+    ///
+    /// **No compile-time default.** Unset means no signature, which is what
+    /// every account that has never been told otherwise gets, and is why
+    /// `email::policy::apply_defaults` does not write one: inventing a footer
+    /// on the user's behalf is not a default, it is content.
+    ///
+    /// Rendered after the RFC 3676 `-- ` separator, in place of `Selfstatus`
+    /// when both are set. Only one footer can be last.
+    EmailSignature,
+
+    /// eeemail: the signature to use in the HTML alternative, as markup.
+    ///
+    /// Optional. When unset, an HTML message gets [`Config::EmailSignature`]
+    /// escaped inside a `<pre>`, so a signature written once still appears in
+    /// both parts rather than only in the one the recipient may not read.
+    /// See docs/adr/0025-composed-html.md for why the plain part is never
+    /// optional.
+    EmailSignatureHtml,
+
     /// Enable sending and executing (applying) sync messages. Sending requires `BccSelf` to be set
     /// and `Bot` unset.
     ///
@@ -674,7 +701,14 @@ impl Config {
                 | Self::MdnsEnabled
                 | Self::Selfavatar
                 | Self::Selfstatus
-                | Self::ForceEncryption,
+                | Self::ForceEncryption
+                // eeemail: a signature is a preference about how this person's
+                // mail looks, not about this device, so it follows them to
+                // their other clients exactly as `Selfstatus` does. Neither is
+                // a file path, which is the exfiltration case the doc comment
+                // above is about.
+                | Self::EmailSignature
+                | Self::EmailSignatureHtml,
         )
     }
 

@@ -2,6 +2,8 @@
 
 use anyhow::Result;
 
+use crate::email::importance::Importance;
+
 use super::*;
 use crate::config::Config;
 use crate::email::policy::{EncryptionMode, undelivered};
@@ -81,6 +83,7 @@ async fn test_a_verified_contact_gets_an_encrypted_chat() -> Result<()> {
         "the body",
         None,
         None,
+        Importance::Normal,
     )
     .await?;
     let sent = alice.pop_sent_msg().await;
@@ -470,6 +473,7 @@ async fn test_html_is_sent_beside_the_text_not_instead_of_it() -> Result<()> {
         TEXT,
         None,
         Some(HTML),
+        Importance::Normal,
     )
     .await?;
     let sent = alice.pop_sent_msg().await;
@@ -508,6 +512,7 @@ async fn test_html_survives_the_draft_round_trip() -> Result<()> {
         TEXT,
         None,
         Some(HTML),
+        Importance::Normal,
     )
     .await?;
     alice.pop_sent_msg().await;
@@ -543,6 +548,7 @@ async fn test_an_unformatted_message_is_unchanged() -> Result<()> {
             TEXT,
             None,
             html,
+            Importance::Normal,
         )
         .await?;
         let sent = alice.pop_sent_msg().await;
@@ -574,6 +580,7 @@ async fn test_html_with_an_attachment_keeps_both() -> Result<()> {
         TEXT,
         Some(&path),
         Some(HTML),
+        Importance::Normal,
     )
     .await?;
     let sent = alice.pop_sent_msg().await;

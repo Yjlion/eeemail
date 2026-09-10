@@ -149,6 +149,7 @@ pub async fn send(
     text: &str,
     attachment: Option<&std::path::Path>,
     html: Option<&str>,
+    importance: super::importance::Importance,
 ) -> Result<MsgId> {
     ensure!(!recipients.is_empty(), "a message needs a recipient");
     let Some(primary) = recipients.to.first() else {
@@ -205,6 +206,9 @@ pub async fn send(
     chat_id.set_draft(context, Some(&mut msg)).await?;
     ensure!(!msg.get_id().is_unset(), "draft was not persisted");
     set_recipients(context, msg.get_id(), recipients).await?;
+    // Same reason as the recipients above: the id exists only once the draft
+    // is persisted, and `MimeFactory` reads this back off the id.
+    super::importance::set(context, msg.get_id(), importance).await?;
 
     send_msg(context, chat_id, &mut msg).await
 }

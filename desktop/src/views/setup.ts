@@ -9,16 +9,27 @@
  * symptom would be "my mail will not send", days later, with nothing pointing
  * back here.
  *
+ * The account being configured comes from `state.setupAccountId`, never from
+ * `state.accountId`. Reading the open account here is how "add another mailbox"
+ * would have reconfigured the mailbox already on screen.
+ *
  * [ADR 0012]: ../../../docs/adr/0012-rpc-and-cli.md
  */
 
 import { rpc } from "../client";
 import { state, changed } from "../state";
+import { loadAccounts, openAccount } from "../accounts";
 
 export function renderSetup(el: HTMLElement): void {
+  // An account already exists, so this is someone adding another and there is
+  // somewhere to go back to. On a genuinely first run there is not, and a
+  // "cancel" leading to an empty window would be a dead end.
+  const isAdditional = state.accounts.length > 0;
+
   el.innerHTML = `
     <form class="setup" id="setup">
-      <h1>Set up your mailbox</h1>
+      ${isAdditional ? `<button type="button" class="close" id="setup-cancel">← Back to mail</button>` : ""}
+      <h1>${isAdditional ? "Add a mailbox" : "Set up your mailbox"}</h1>
       <p class="lede">
         eeemail uses IMAP and SMTP as transport only. Mail is downloaded,
         decrypted, stored on this device and removed from the server, so the
@@ -57,6 +68,11 @@ export function renderSetup(el: HTMLElement): void {
   `;
 
   const form = el.querySelector<HTMLFormElement>("#setup")!;
+  el.querySelector<HTMLButtonElement>("#setup-cancel")?.addEventListener("click", () => {
+    state.setupAccountId = null;
+    state.screen = null;
+    changed();
+  });
   const status = el.querySelector<HTMLElement>("#setup-status")!;
   const error = el.querySelector<HTMLElement>("#setup-error")!;
   const field = (name: string) =>
@@ -71,8 +87,10 @@ export function renderSetup(el: HTMLElement): void {
     submit.disabled = true;
 
     try {
+      // `setupAccountId`, not `accountId`: a second mailbox needs a second
+      // account, and reusing the open one would reconfigure it in place.
       const accountId =
-        state.accountId || ((await rpc.call("add_account")) as number);
+        state.setupAccountId ?? ((await rpc.call("add_account")) as number);
 
       // Before `add_transport`, not after. `add_transport` configures the
       // account, and `policy::apply_defaults` deliberately never touches a
@@ -105,8 +123,14 @@ export function renderSetup(el: HTMLElement): void {
 
       await rpc.call("start_io", [accountId]);
 
-      state.accountId = accountId;
+      await loadAccounts();
+      state.setupAccountId = null;
       state.screen = null;
+      // Opens on the account just set up, which is what someone who has this
+      // second typed a password expects to see. Unconditional, and it is what
+      // loads the labels and the first list -- setting `accountId` and
+      // repainting is what left a first-run account with an empty sidebar.
+      await openAccount(accountId);
       changed();
     } catch (err) {
       status.hidden = true;

@@ -2,6 +2,8 @@
 
 use anyhow::Result;
 
+use crate::email::importance::Importance;
+
 use super::*;
 use crate::chat::send_text_msg;
 use crate::receive_imf::receive_imf;
@@ -313,6 +315,7 @@ async fn test_an_encrypted_reply_from_someone_you_wrote_to_is_not_held() -> Resu
         "hello",
         None,
         None,
+        Importance::Normal,
     )
     .await?;
     alice.pop_sent_msg().await;

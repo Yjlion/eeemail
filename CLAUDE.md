@@ -57,7 +57,7 @@ cargo clippy --workspace --all-targets -- -D warnings   # and again with --all-f
 cargo fmt --all -- --check
 cd .. && ./scripts/check-fork-patches.sh
 cd desktop && npm run check && npm run build
-./scripts/screenshots.sh    # 11 images, must be byte-stable across runs
+./scripts/screenshots.sh    # 13 images, must be byte-stable across runs
 ```
 
 The live passes need Docker and a built `deltachat-rpc-server`; see

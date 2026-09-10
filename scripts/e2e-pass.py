@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The six-step end-to-end pass, run against `server/compose`.
+"""The end-to-end pass, run against `server/compose`.
 
 Everything eeemail ships is unit-tested; until this script existed, none of it
 had ever spoken to a real IMAP or SMTP server. This is the difference between
@@ -93,7 +93,7 @@ def step2_send_cc(rpc: Rpc, alice: int, bob: int, workdir: str) -> int:
 
     rpc.call("send_email", alice,
              {"to": [f"bob@{DOMAIN}"], "cc": [f"carol@{DOMAIN}"], "bcc": []},
-             SUBJECT, BODY, attachment, None)
+             SUBJECT, BODY, attachment, None, None)
 
     # Held, not delivered: alice is neither verified nor known to bob, which is
     # step 3's subject. Here it is only how we find the message.
@@ -126,7 +126,7 @@ def step2_send_cc(rpc: Rpc, alice: int, bob: int, workdir: str) -> int:
 def step2b_reply_encrypts(rpc: Rpc, alice: int, bob: int) -> None:
     """bob replies; alice's Autocrypt header means it goes out encrypted."""
     rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
-             f"Re: {SUBJECT}", "Checked -- you are right.", None, None)
+             f"Re: {SUBJECT}", "Checked -- you are right.", None, None, None)
 
     def arrived():
         ids = rpc.call("get_tagged_messages", alice, "inbox")
@@ -199,7 +199,7 @@ def step3b_securejoin(rpc: Rpc, alice: int, bob: int) -> None:
     check(True, "SecureJoin completes and alice becomes a verified key contact")
 
     rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
-             "Verified now", "This one should be encrypted.", None, None)
+             "Verified now", "This one should be encrypted.", None, None, None)
 
     def arrived():
         for candidate in rpc.call("get_tagged_messages", alice, "inbox"):
@@ -233,7 +233,7 @@ def step3c_html(rpc: Rpc, alice: int, bob: int) -> None:
     SMTP, and the alternative is assembled by `MimeFactory` on the way out.
     """
     rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
-             HTML_SUBJECT, HTML_TEXT, None, HTML_BODY)
+             HTML_SUBJECT, HTML_TEXT, None, HTML_BODY, None)
 
     def arrived():
         for candidate in rpc.call("get_tagged_messages", alice, "inbox"):
@@ -261,6 +261,104 @@ def step3c_html(rpc: Rpc, alice: int, bob: int) -> None:
     raw = rpc.call("get_message_raw_mime", alice, msg_id)
     check(raw is not None and "multipart/alternative" in raw,
           "the message is a multipart/alternative on the wire")
+
+
+# ---------------------------------------------------------------------------
+# Step 3d -- the signature, importance, and the blocklist
+# ---------------------------------------------------------------------------
+
+SIGNATURE = "Bob Bobson\nExample Corp"
+SIG_SUBJECT = "With a signature"
+IMPORTANT_SUBJECT = "Please read this one"
+BLOCKED_SUBJECT = "You did not ask for this"
+
+
+def _wait_for_subject(rpc: Rpc, account: int, tag: str, subject: str, what: str) -> int:
+    def arrived():
+        for candidate in rpc.call("get_tagged_messages", account, tag):
+            row = rpc.call("get_message_rows", account, [candidate])[0]
+            if row["subject"] == subject:
+                return candidate
+        return None
+
+    return wait_for(arrived, what)
+
+
+def step3d_signature(rpc: Rpc, alice: int, bob: int) -> None:
+    """A signature is appended once, and reaches the recipient.
+
+    Worth a live pass rather than a unit test because the footer is assembled
+    by `MimeFactory` and then survives a real SMTP hop and a real IMAP fetch:
+    the unit test only sees what was rendered, never what was delivered.
+    """
+    rpc.call("batch_set_config", bob, {"email_signature": SIGNATURE})
+    rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
+             SIG_SUBJECT, "The body.", None, None, None)
+
+    msg_id = _wait_for_subject(rpc, alice, "inbox", SIG_SUBJECT,
+                               "alice to receive the signed message")
+    text = rpc.call("get_message", alice, msg_id)["text"]
+    check(text.count("Example Corp") == 1,
+          "the signature arrives exactly once", f"got {text!r}")
+    check("The body." in text,
+          "and the body is still there", f"got {text!r}")
+
+    # Cleared, so the messages the later steps send are not all signed.
+    rpc.call("batch_set_config", bob, {"email_signature": None})
+
+
+def step3e_importance(rpc: Rpc, alice: int, bob: int) -> None:
+    """A high-importance message arrives marked high.
+
+    The headers are written by `MimeFactory` and read back by `receive_imf`
+    through `email::importance`, so this is the only check that both halves
+    agree across a real round trip rather than in one process.
+    """
+    rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
+             IMPORTANT_SUBJECT, "Marked high.", None, None, "high")
+
+    msg_id = _wait_for_subject(rpc, alice, "inbox", IMPORTANT_SUBJECT,
+                               "alice to receive the important message")
+    check(rpc.call("get_message_importance", alice, msg_id) == "high",
+          "a high-importance message arrives marked high")
+
+    raw = rpc.call("get_message_raw_mime", alice, msg_id)
+    check(raw is not None and "Importance: high" in raw,
+          "the Importance header is on the wire")
+    check(raw is not None and "X-Priority: 1" in raw,
+          "and so is X-Priority, which is what most clients read")
+
+    # The other half of the decision: an unmarked message carries neither.
+    row = rpc.call("get_message_rows", alice, [msg_id])[0]
+    check(row["importance"] == "high", "and the list row says so too")
+
+
+def step3f_blocklist(rpc: Rpc, alice: int, bob: int) -> None:
+    """Mail from a blocked sender lands in Trash rather than the inbox.
+
+    The hook runs inside `receive_imf`, so nothing short of a real delivery
+    exercises the path a blocked message actually takes.
+    """
+    rpc.call("add_to_blocklist", alice, f"bob@{DOMAIN}", None)
+    try:
+        rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
+                 BLOCKED_SUBJECT, "Unsolicited.", None, None, None)
+
+        msg_id = _wait_for_subject(rpc, alice, "trash", BLOCKED_SUBJECT,
+                                   "the blocked message to land in Trash")
+        trashed = rpc.call("get_trashed_message", alice, msg_id)
+        check(trashed is not None and trashed["reason"] == "blocked",
+              "and it says it was trashed for being blocked",
+              f"got {trashed!r}")
+
+        inbox = rpc.call("get_tagged_messages", alice, "inbox")
+        subjects = [rpc.call("get_message_rows", alice, [i])[0]["subject"] for i in inbox]
+        check(BLOCKED_SUBJECT not in subjects,
+              "and it never appears in the inbox")
+    finally:
+        # Unblocked whatever happened, so a failure here cannot silently break
+        # every later step by leaving bob blocked.
+        rpc.call("remove_from_blocklist", alice, f"bob@{DOMAIN}")
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +515,13 @@ def main() -> int:
         run("step 3b: SecureJoin", step3b_securejoin, rpc, alice, bob)
         run("step 3c: formatted mail carries both parts",
             step3c_html, rpc, alice, bob)
+
+        run("step 3d: a signature is appended once",
+            step3d_signature, rpc, alice, bob)
+        run("step 3e: importance travels on the wire",
+            step3e_importance, rpc, alice, bob)
+        run("step 3f: a blocked sender's mail is trashed on arrival",
+            step3f_blocklist, rpc, alice, bob)
 
         if msg_id is not None:
             run("step 4: a timer fires and the message survives it",

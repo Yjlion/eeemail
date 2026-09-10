@@ -36,10 +36,12 @@ export async function refreshList(): Promise<void> {
   }
 }
 
-function when(timestamp: number): string {
+export function when(timestamp: number): string {
   const date = new Date(timestamp * 1000);
   // Locale-independent and stable: a screenshot regenerated on a machine in
-  // another timezone should not produce a different image.
+  // another timezone should not produce a different image. Exported so the one
+  // rule has one implementation -- a second copy is how two views end up
+  // disagreeing about what a timestamp looks like.
   return date.toISOString().slice(0, 16).replace("T", " ");
 }
 
@@ -144,6 +146,15 @@ export async function renderList(el: HTMLElement): Promise<void> {
         </div>
         <div class="badges">
           ${
+            // First, and before the crypto badges: importance is the one thing
+            // on a row the sender is asserting about the message itself.
+            row.importance === "high"
+              ? `<span class="badge important">important</span>`
+              : row.importance === "low"
+                ? `<span class="badge">low priority</span>`
+                : ""
+          }
+          ${
             row.encrypted
               ? `<span class="badge enc">e2e</span>`
               : `<span class="badge plain">plain</span>`
@@ -174,7 +185,11 @@ export async function renderList(el: HTMLElement): Promise<void> {
       // message gets deleted.
       state.selectedMsgId = msgId;
       changed();
-      void showMenuFor(event, { msgId, tags: byId.get(msgId)?.tags ?? [] });
+      void showMenuFor(event, {
+        msgId,
+        tags: byId.get(msgId)?.tags ?? [],
+        importance: byId.get(msgId)?.importance,
+      });
     });
   }
 }

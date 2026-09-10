@@ -2850,6 +2850,98 @@ UPDATE msgs SET state=24 WHERE state=18; -- Change OutPreparing to OutFailed.
         .await?;
     }
 
+    // eeemail: addresses and domains whose mail is rejected on arrival.
+    // docs/adr/0027-a-blocklist-that-trashes-on-arrival.md
+    inc_and_check(&mut migration_version, 172)?;
+    if dbversion < migration_version {
+        sql.execute_migration(
+            // Its own table rather than `contacts.blocked`, because a blocklist
+            // has to hold a pattern for somebody who has no contact row: the
+            // whole point is to reject mail from a stranger, and a stranger by
+            // definition has not written yet. `contacts.blocked` stays what it
+            // is and is set alongside this, for a pattern that names a contact.
+            //
+            // `pattern_norm` is the lowercased form and carries the uniqueness,
+            // for the same reason `labels.name_norm` does: a blocklist that
+            // holds both `Spam@Example.com` and `spam@example.com` is a
+            // blocklist with a hole in it.
+            "CREATE TABLE blocklist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern TEXT NOT NULL, -- as the user typed it
+                pattern_norm TEXT NOT NULL UNIQUE, -- lowercased; `@domain` for a domain
+                added INTEGER NOT NULL,
+                reason TEXT NOT NULL DEFAULT ''
+            ) STRICT;",
+            migration_version,
+        )
+        .await?;
+    }
+
+    // eeemail: the address book -- contact records and categories.
+    // docs/adr/0028-contacts-are-an-address-book.md
+    inc_and_check(&mut migration_version, 173)?;
+    if dbversion < migration_version {
+        sql.execute_migration(
+            // Side tables keyed by `contacts.id`, the same arrangement
+            // `contact_policy` uses, rather than columns on upstream's
+            // `contacts`. Nothing here is ever consulted when deciding how to
+            // send a message, so it has no business in the row that decides it.
+            "CREATE TABLE contact_details (
+                contact_id INTEGER PRIMARY KEY NOT NULL, -- contacts.id
+                organisation TEXT NOT NULL DEFAULT '',
+                job_title TEXT NOT NULL DEFAULT '',
+                postal TEXT NOT NULL DEFAULT '',
+                website TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT ''
+            ) STRICT;
+
+            -- Its own table rather than a JSON column, so a number is
+            -- searchable by the same LIKE the rest of the record is.
+            CREATE TABLE contact_phones (
+                contact_id INTEGER NOT NULL, -- contacts.id
+                seq INTEGER NOT NULL, -- the order the user put them in
+                label TEXT NOT NULL,
+                number TEXT NOT NULL, -- exactly as typed; formatting breaks it
+                PRIMARY KEY (contact_id, seq)
+            ) STRICT;
+
+            -- A separate vocabulary from `labels`. A label says where a message
+            -- is; a category says who a person is. One table would put every
+            -- category in the sidebar as a mail view.
+            CREATE TABLE contact_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL, -- as the user typed it
+                name_norm TEXT NOT NULL UNIQUE, -- lowercased, unique
+                color INTEGER -- 0xRRGGBB, NULL if the user picked none
+            ) STRICT;
+            CREATE TABLE contact_category_members (
+                contact_id INTEGER NOT NULL,
+                category_id INTEGER NOT NULL,
+                PRIMARY KEY (contact_id, category_id)
+            ) STRICT;
+            CREATE INDEX contact_category_members_index1
+                ON contact_category_members (category_id);",
+            migration_version,
+        )
+        .await?;
+    }
+
+    // eeemail: how important a message claims to be.
+    // docs/adr/0029-importance-travels-on-the-wire.md
+    inc_and_check(&mut migration_version, 174)?;
+    if dbversion < migration_version {
+        sql.execute_migration(
+            // No row means normal, which is almost every message, so this table
+            // stays small and an ordinary message costs nothing to store.
+            "CREATE TABLE msg_importance (
+                msg_id INTEGER PRIMARY KEY NOT NULL, -- msgs.id
+                level INTEGER NOT NULL -- -1 low, 1 high; normal is never stored
+            ) STRICT;",
+            migration_version,
+        )
+        .await?;
+    }
+
     let new_version = sql
         .get_raw_config_int(VERSION_CFG)
         .await?

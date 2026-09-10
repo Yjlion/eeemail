@@ -60,6 +60,13 @@ export function renderComposer(el: HTMLElement): void {
       <label>Cc <input name="cc" value="${escapeHtml(draft.cc)}" autocomplete="off" /></label>
       <label>Bcc <input name="bcc" value="${escapeHtml(draft.bcc)}" autocomplete="off" /></label>
       <label>Subject <input name="subject" value="${escapeHtml(draft.subject)}" autocomplete="off" /></label>
+      <label>Importance
+        <select name="importance">
+          <option value="normal" selected>Normal</option>
+          <option value="high">High</option>
+          <option value="low">Low</option>
+        </select>
+      </label>
       <label class="attach">Attachment
         <input name="attachment" type="file" />
         <span class="hint">One file per message: the engine carries one, and
@@ -222,6 +229,9 @@ export function renderComposer(el: HTMLElement): void {
         // the bytes and hands back one.
         file ? await stageAttachment(file) : null,
         body.html,
+        // Normal puts no header on the message at all, which is what keeps an
+        // ordinary message identical to one sent before this control existed.
+        (form.elements.namedItem("importance") as HTMLSelectElement).value,
       ]);
       state.composerDraft = null;
       state.screen = null;

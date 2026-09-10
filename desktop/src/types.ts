@@ -61,7 +61,7 @@ export type MessageTags = {
   user: Label[];
 };
 
-export type TrashReason = "deleted" | "expired" | "unaccepted";
+export type TrashReason = "deleted" | "expired" | "unaccepted" | "blocked";
 
 export type TrashedMessage = {
   trashedAt: number;
@@ -96,8 +96,13 @@ export type MessageRow = {
   encrypted: boolean;
   verified: boolean;
   hasAttachment: boolean;
+  /** As the sender marked it. Absent from the wire entirely when normal. */
+  importance: Importance;
   tags: SystemTag[];
 };
+
+/** How important a message claims to be. */
+export type Importance = "high" | "normal" | "low";
 
 export type EncryptionMode = "strict" | "opportunistic" | "lenient";
 export type MdnPolicy = "never" | "verifiedOnly" | "always";
@@ -117,8 +122,25 @@ export type Contact = {
   id: number;
   address: string;
   displayName: string;
+  /** What the user called them, empty if only the sender's own name is known. */
+  name: string;
   isVerified: boolean;
-  isBlocked?: boolean;
+  isBlocked: boolean;
+  /** `Name (addr@example.com)`, as the engine formats it. */
+  nameAndAddr: string;
+  /**
+   * Whether this row is keyed on a key rather than only on an address.
+   *
+   * The same correspondent is routinely two rows: an address-contact from mail
+   * sent to them, and a key-contact from the encrypted reply. The address book
+   * shows both, because hiding one is how a user ends up wondering why the
+   * person they verified still gets cleartext.
+   */
+  isKeyContact: boolean;
+  /** Whether a key is actually held, which a key-contact does not guarantee. */
+  e2eeAvail: boolean;
+  lastSeen: number;
+  color: string;
 };
 
 export type RecipientSet = {
@@ -152,4 +174,67 @@ export type StructuredObject = {
   json: string;
   trusted: boolean;
   source: StructuredSource;
+};
+
+/**
+ * One profile in the account list.
+ *
+ * Mirrors the engine's `Account`, which is a `kind`-tagged union: an account
+ * exists from the moment it is created and is `Unconfigured` until a transport
+ * is added. Both kinds come back from `get_all_accounts`, so the switcher has
+ * to expect a profile with no address at all -- that is a setup someone
+ * abandoned half-way, and hiding it would leave them no way back to it.
+ */
+export type Account =
+  | {
+      kind: "Configured";
+      id: number;
+      addr: string | null;
+      displayName: string | null;
+      profileImage: string | null;
+      color: string;
+      privateTag: string | null;
+    }
+  | { kind: "Unconfigured"; id: number };
+
+/** What to call an account in a list, when it may not have an address yet. */
+export function accountLabel(account: Account): string {
+  if (account.kind === "Unconfigured") return "Unfinished setup";
+  return account.displayName || account.addr || "Unfinished setup";
+}
+
+/** One entry in the blocklist: an address, or `@example.com` for a domain. */
+export type BlocklistEntry = {
+  id: number;
+  pattern: string;
+  added: number;
+  reason: string;
+};
+
+/** One phone number on a contact record. */
+export type ContactPhone = {
+  label: string;
+  number: string;
+};
+
+/**
+ * What the address book knows about somebody, beyond their contact row.
+ *
+ * Written back whole rather than a field at a time: a partial update cannot
+ * distinguish "clear this field" from "leave it alone".
+ */
+export type ContactDetails = {
+  organisation: string;
+  jobTitle: string;
+  postal: string;
+  website: string;
+  notes: string;
+  phones: ContactPhone[];
+};
+
+/** A user-defined grouping of contacts, with its own colour. */
+export type ContactCategory = {
+  id: number;
+  name: string;
+  color: string | null;
 };

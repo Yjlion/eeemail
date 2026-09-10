@@ -371,14 +371,15 @@ Two properties are load-bearing and each has a test guarding it. **Dedup hashes 
 - **No plaintext leaves the device:** capture all IMAP APPEND and SMTP traffic during a full sync-and-send cycle and assert no decrypted body or subject appears in it, including in `BccSelf` self-copies.
 - **Retention is honored:** raw MIME past its expiry is gone from the blob store; a message whose server retention has elapsed is gone from the server; and in coexistence mode ("never delete") the server mailbox is byte-for-byte unchanged after a full sync.
 
-**End-to-end — the six-step pass.** `scripts/e2e-pass.py` against `server/compose`, in this order:
+**End-to-end — the pass.** `scripts/e2e-pass.py` against `server/compose`, in this order:
 
 1. **Account setup.** Two accounts configured against real IMAP and SMTP, asserting that eeemail's defaults actually landed — gating on, expiry recoverable at 30 days, encryption opportunistic. `policy::apply_defaults` refuses a configured account, so this also pins the call *before* the transport is added.
 2. **A Cc'd message.** Subject, `To`, `Cc` and one attachment survive the round trip to a third real mailbox. Two accounts cannot tell a dropped `Cc` from a delivered one, which is why the server provisions `carol`.
 3. **Held mail reaches the inbox.** A stranger's mail lands in Unverified, stays readable, and moves to the inbox when the sender is accepted. Runs *before* step 3b: writing to someone makes them known, which releases their held mail on its own.
-4. **A timer fires and the message survives it.** Core's own `ephemeral_loop` expires a message into Trash; it stays readable and restores. This is ADR 0019's whole point, so nothing simulates it.
-5. **Encryption at rest.** Blob encryption refuses to run on a cleartext database, then a passphrase and a full blobdir migration are checked through `get_at_rest_protection`.
-6. **Screenshots.** Regenerated from fixtures and byte-stable; touches no server.
+4. **A signature, an importance mark, and a blocklist entry** (steps 3d–3f). The signature is assembled by `MimeFactory` and has to survive a real SMTP hop to be checked at all; the importance headers are written by one half of `email::importance` and read by the other, so this is the only place the two are shown to agree across a round trip; and the blocklist hook runs inside `receive_imf`, so nothing short of a real delivery exercises the path blocked mail takes.
+5. **A timer fires and the message survives it.** Core's own `ephemeral_loop` expires a message into Trash; it stays readable and restores. This is ADR 0019's whole point, so nothing simulates it.
+6. **Encryption at rest.** Blob encryption refuses to run on a cleartext database, then a passphrase and a full blobdir migration are checked through `get_at_rest_protection`.
+7. **Screenshots.** Regenerated from fixtures and byte-stable; touches no server.
 
 Step 3b additionally completes SecureJoin between the two accounts and asserts the resulting mail is encrypted and verified. That exercises the code but is **not** interop: both sides are the same core. `scripts/interop-pass.py` is.
 

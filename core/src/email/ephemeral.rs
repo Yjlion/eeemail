@@ -94,6 +94,8 @@ pub enum Reason {
     Expired = 1,
     /// It was held from an unverified sender and never accepted.
     Unaccepted = 2,
+    /// Its sender is on the blocklist.
+    Blocked = 3,
 }
 
 impl Reason {
@@ -101,6 +103,7 @@ impl Reason {
         match value {
             1 => Reason::Expired,
             2 => Reason::Unaccepted,
+            3 => Reason::Blocked,
             _ => Reason::Deleted,
         }
     }
@@ -194,8 +197,9 @@ pub(crate) async fn to_trash(
         // A timer firing is not an intent worth carrying, because every device
         // runs the same timer and reaches the same conclusion on its own; nor is
         // a sweep, for the same reason and because the hold it ends was never
-        // synced either.
-        Reason::Expired | Reason::Unaccepted => Sync::Nosync,
+        // synced either. A blocklist hit is the same: every device holds the
+        // same list and applies it to the same message.
+        Reason::Expired | Reason::Unaccepted | Reason::Blocked => Sync::Nosync,
     };
     labels::set_ext(context, msgs, &trash_label, true, sync).await?;
 
