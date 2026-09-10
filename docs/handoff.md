@@ -46,6 +46,42 @@ their mail started arriving again — a half-undone block, which is exactly what
 found by reading the diff before committing. **Pairs of writes that must move
 together want one function, and the undo path is a pair too.**
 
+### A failing CI log is not a list of what is failing
+
+The lint job reported two clippy errors, both in `core/src/email/`. Fixing
+those two and pushing would have produced a second red run: there were four.
+`cargo clippy --workspace --all-targets` stops at the first crate that fails,
+so the run died in the `deltachat` lib and never checked `deltachat-jsonrpc`
+or any test target -- where `too_many_arguments` on `send_email` and a
+`needless_borrow` in `signature_tests` were waiting. The other two were found
+by running **both** clippy configurations locally and reading the whole
+output. **A CI log tells you why the build stopped, not what is broken.**
+
+### `forbid` is not `deny`, and one of these cannot be silenced
+
+`append_to_html` sliced a string at the offset `rfind` returned. That is
+safe -- `rfind` reports where a match begins, which is always a char boundary
+-- and `clippy::string_slice` fired anyway, because the lint is on the pattern
+rather than on a proven panic. `src/lib.rs` sets it with `forbid`, so there
+was no `#[allow]` to reach for; the only way through a `forbid` is to stop
+doing the thing. It uses `split_at` now, as `email::blobcrypt` already did.
+Where a lint is merely `deny`, an attribute is a real option -- `send_email`
+trips `too_many_arguments` purely because of the seventh parameter this branch
+gave it, and carries `#[expect]` like the two methods above it in that file.
+
+### The gate cannot be trusted to have run just because it was started
+
+Two container restarts killed `cargo nextest` during its compile phase, and
+both times the surviving evidence -- a clean tree, green `fmt`, green
+`check-fork-patches.sh` -- looked exactly like a gate that had passed. It had
+not; clippy never executed once. The four errors above reached `main` through
+that gap. **A check that was interrupted is a check that did not run**, and
+the only thing that distinguishes the two is looking for its exit code.
+
+Worth knowing for the next branch: this environment's rustc is *newer* than the
+version `ci.yml` pins, which is the skew the comment there warns gives phantom
+clippy and rustfmt diffs. Local clippy is a filter, not the verdict.
+
 ### A matching rule with two implementations will eventually have two answers
 
 `blocklist::matches` is SQL, for speed on every incoming message;
