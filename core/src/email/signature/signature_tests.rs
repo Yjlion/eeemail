@@ -36,7 +36,7 @@ async fn sent_payload(alice: &TestContext, to: &str, text: &str, html: Option<&s
     )
     .await
     .expect("send failed");
-    readable(&alice.pop_sent_msg().await.payload())
+    readable(alice.pop_sent_msg().await.payload())
 }
 
 /// The payload with its quoted-printable escapes undone, for substring checks.

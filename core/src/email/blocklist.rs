@@ -176,7 +176,7 @@ pub async fn list(context: &Context) -> Result<Vec<Entry>> {
                     reason: row.get(3)?,
                 })
             },
-            |rows| rows.collect::<Result<Vec<_>, _>>().map_err(Into::into),
+            |rows| rows.collect::<Result<Vec<_>, _>>(),
         )
         .await
 }
