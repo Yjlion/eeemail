@@ -95,7 +95,12 @@ pub fn append_to_html(html: &str, signature: &Signature) -> String {
     let separator = "<div class=\"signature-sep\">--</div>";
     let block = format!("{separator}{}", signature.html);
     match html.rfind("</body>") {
-        Some(at) => format!("{}{}{}", &html[..at], block, &html[at..]),
+        // `rfind` reports the byte offset a match starts at, which is always a
+        // char boundary, so this cannot split a multi-byte character.
+        Some(at) => {
+            let (before, rest) = html.split_at(at);
+            format!("{before}{block}{rest}")
+        }
         None => format!("{html}{block}"),
     }
 }
