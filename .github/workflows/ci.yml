@@ -20,8 +20,42 @@ env:
   MSRV: 1.89.0
 
 jobs:
+  # A pull request that touches only markdown cannot change what the Rust jobs
+  # compile -- no crate includes a `.md` file -- so it should not wait on them.
+  # Release-notes PRs are the common case. A push to main always runs
+  # everything, because `release.yml` publishes a tag only after this workflow
+  # passed on the tagged commit, and a skipped suite must never be what it saw.
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')
+          printf '%s\n' "$files"
+          if printf '%s\n' "$files" | grep -qvE '^(docs/.*|.*\.md)$'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "documentation only; the Rust jobs are skipped"
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   lint:
     name: Lint
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -42,6 +76,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the frontend
         working-directory: desktop
         run: |
@@ -141,6 +176,8 @@ jobs:
 
   msrv:
     name: MSRV ${{ github.workflow }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -158,6 +195,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The Tauri shell needs the built frontend to exist at compile time:
       # `tauri::generate_context!` reads `frontendDist`.
       - uses: actions/setup-node@v4
@@ -174,6 +212,8 @@ jobs:
 
   windows:
     name: Windows
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -192,6 +232,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           key: windows
       # `tauri::generate_context!` reads `frontendDist` at compile time.
       - uses: actions/setup-node@v4
@@ -226,10 +267,18 @@ jobs:
         working-directory: core
         run: cargo nextest run -p eeemail-desktop --locked
 
+  # One leg per feature configuration, in parallel. They were two steps of one
+  # job, and that job was the whole of CI's wall clock.
   test:
-    name: Test
+    name: Test (${{ matrix.features }} features)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        features: [default, all]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -245,6 +294,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
+          key: ${{ matrix.features }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # nextest, not `cargo test`: deltachat-time mocks the clock via a
       # process-global static whose shift accumulates, so a single-process run
       # fails on a green tree. nextest isolates each test in its own process.
@@ -253,11 +304,14 @@ jobs:
         with:
           tool: nextest
       - name: cargo nextest (default features)
+        if: matrix.features == 'default'
         working-directory: core
         run: cargo nextest run --workspace --locked
       - name: cargo nextest (all features)
+        if: matrix.features == 'all'
         working-directory: core
         run: cargo nextest run --workspace --locked --all-features
       - name: doctests
+        if: matrix.features == 'default'
         working-directory: core
         run: cargo test --workspace --locked --doc
