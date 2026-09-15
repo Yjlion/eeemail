@@ -1,74 +1,84 @@
-# eeemail v0.5.0 — the one where blocking blocks
+# eeemail v0.6.0 — the one where the composer is an editor
 
 An end-to-end-encrypted email client with classic email functionality, built on
 a fork of [`chatmail/core`](https://github.com/chatmail/core).
 
-**Blocking a sender did not stop their mail.** The engine set a flag and then
-threw the answer away, so a blocked sender's mail was fetched, decrypted,
-stored and marked read. This release makes blocking mean what it says, and adds
-six more things: several accounts in one window, an email signature, message
-importance that survives the wire, a searchable address book, and user-created
-tags with colours.
+**Formatted mail is now written in a real editor.** The composer's formatted
+mode was a bare `contenteditable` driven by `document.execCommand` — deprecated,
+and different on each of the three webviews eeemail ships on. It is now
+[Squire](https://github.com/fastmail/Squire), Fastmail's email editor, and the
+toolbar gains text colour, highlight, font, size and alignment.
 
-## What is fixed
-
-**A blocked sender's mail now stops at the door.** `Contact::block` set
-`contacts.blocked`, and `receive_imf` computed `from_id_blocked` and then
-discarded it. For a messenger that is deliberate — it is how contact requests
-work. For a mail client it is a promise the user can watch being broken, in
-their own inbox. `email::blocklist` rejects on arrival, and `block_sender`
-writes both halves together so no caller can do one and not the other.
-
-The undo path had the same shape in reverse: removing a block deleted the
-pattern and left `contacts.blocked` set, hiding the contact from search while
-their mail started arriving again. That one was found by re-reading the diff,
-not by a failing test.
+This release is frontend only. The engine, the RPC surface and `send_email` are
+unchanged from v0.5.0.
 
 ## What is new
 
-**Several accounts in one window.** The engine has had `select_account` since
-before this client existed; the frontend set the account once, at boot, and
-never again. Switching is now in the sidebar.
+**Squire underneath the toolbar.** Bold, italic, underline, strikethrough,
+heading, quote, lists, code and link now toggle off as well as on, show as
+pressed where the caret is, and undo as one step. The usual shortcuts work:
+Ctrl+B/I/U, Ctrl+Shift+7/8/9, Ctrl+[ and ], Ctrl+D for code, Ctrl+Z.
 
-**An email signature**, appended as text and as HTML, before `</body>` when the
-body has one.
+**Colour, highlight, font, size and alignment.** Colours are free; fonts are
+sans-serif, serif or monospace; sizes are small, large and huge; alignment is
+left, centre, right or justified. Fonts and sizes are deliberately few: a named
+font is a guess about what the recipient has installed, and a keyword size
+scales with their default where a pixel size does not.
 
-**Message importance** — high, normal or low — that travels as a real header,
-so other clients see it and it survives a round trip.
+**A paste shows what will be sent.** What you paste goes through the same filter
+as the message itself, so formatting that would be stripped on send is stripped
+on paste, where you can see it. There is one filter, not a paste sanitiser and a
+send sanitiser that can disagree. The first parse of pasted HTML is inert and
+never enters the document; only the filtered result does.
 
-**A searchable address book** with records and categories. `get_contacts` has
-always taken a server-side substring filter; it was hardcoded `null`.
+**What goes on the wire is still rebuilt, never copied.** The whitelist gains
+`<span>` and a `style` attribute written from checked properties only — a colour
+with nothing in it but a colour, a family from the list, a size from the list, an
+alignment from four. `class` is never sent. `text/plain` is still always sent
+beside the HTML, and a message with no formatting still goes out as plain mail.
+[ADR 0030](../docs/adr/0030-the-composer-edits-with-squire.md) records the
+decision and amends [0025](../docs/adr/0025-composed-html.md).
 
-**Tags with colours**, created by you. Labels have carried a colour since
-migration 166 and the client called exactly one of the eight label methods.
+## What was wrong before it shipped
 
-Three of the seven needed no engine work at all — the machinery was already
-there and unreached. That is worth knowing before designing the next one.
+Two style checks passed review and failed the first time they ran in a browser.
+`color: red` stays the keyword `red` rather than becoming `rgb()`, so a check
+that only knew `rgb()` stripped every named colour. And a pasted `background:`
+shorthand leaves `background-color: initial`, which a letters-only check took
+for a colour. Both are fixed. The lesson is in `docs/handoff.md`: anything that
+reads a parsed style value has to be checked against a browser, not against
+what the value was set to.
 
 ## Known gaps
 
-**Nobody has run this build.** The same gap v0.3.1 and v0.4.0 shipped with. The
-blocklist at the centre of this release has not been exercised by a human in a
-real application, and under `xvfb` in the preparation environment the webview's
-web process does not start, so what the app *draws* was again not observed.
+**Nobody has run this build**, now for the fourth release in a row — and this
+one changes the part of the app a person types into. The editor was driven in
+headless Chromium, which is none of the engines eeemail ships on: nothing was
+run in WebKitGTK or WebView2. Squire is built for all three, but that is its
+claim, not something observed here.
 
-**The three live passes were not re-run**, and no CI job runs them. That matters
-more than usual here: `send_email` gained a *seventh* parameter, and yerpc
-compares positional arity with `!=`, so a six-argument call to it is `invalid
-params` rather than a defaulted `None`. Eight call sites across the three
-scripts were swept by reading, not by executing — the identical situation to
-v0.4.0's sixth parameter, one release later.
+**The sanitiser has no automated test.** It is the most security-relevant code
+in the frontend. It was checked with 30 cases in a throwaway harness — `onerror`,
+`<script>` and `<style>` text, `javascript:` links, `url()` in styles, free-text
+fonts, attribute injection, a whole-document paste — and none of that is
+committed, because the frontend has no test runner.
 
-**The blocklist matching rule has two implementations.** SQL for the hot path,
-Rust for removal. `test_the_query_and_the_predicate_agree` pins them together,
-but two expressions of one rule is the shape that already drifted once here.
+**A recipient may not show the new styles.** Delta Chat's clients converged on a
+tag list without `<span>`; a client that ignores it shows the words unstyled.
+Bold pasted from Google Docs, which marks it with a style rather than a tag,
+arrives as plain text.
 
-**Importance is trusted as it arrives.** Any sender can mark their own mail
-high, exactly as with any mail client. It is a display hint, not a claim.
+**No styled message has been sent through a real server and read back.** The
+live passes were not re-run, and none of them composes formatted mail.
 
-**`%APPDATA%` is still the Windows profile**, and attachment filenames are still
-only reduced to a last path component — both unchanged from v0.4.0, both still
-wanting a migration and a stricter filter respectively.
+**eeemail now has a rich-text library in the process that renders mail.** It
+never sees received mail — message HTML still renders only in the sandboxed
+frame — and it is pinned exactly. It is still a dependency where v0.5.0 had
+none.
+
+**`%APPDATA%` is still the Windows profile**, attachment filenames are still only
+reduced to a last path component, and the trash notice still reads the wall
+clock. All unchanged from v0.5.0.
 
 Still unaudited, still prerelease. Use a dedicated mail account.
 
@@ -87,22 +97,13 @@ cd desktop && npm run check && npm run build      clean
 ./scripts/screenshots.sh                          13 images
 ```
 
-CI is green on this commit across all seven jobs, Windows and the test mail
-server included.
+CI results for this commit are added once the release PR's run completes.
 
-**Why nothing caught the thing that got through.** The feature branch merged
-with its lint job red, putting four clippy errors on `main` for forty minutes.
-CI reported two of them; there were four, because `--all-targets` stops at the
-first crate that fails and never reached the other two. A CI log says why the
-build stopped, not what is broken.
-
-Two of the thirteen screenshots are not byte-stable across days: the trash
-notice renders "still here for N more days" from the wall clock rather than the
-pinned fixture clock. Known, unfixed, and recorded — it means a diff in those
-two images is not necessarily a change in the UI.
-
-**Run both nextest configurations.** `--all-features` carries ten tests the
-default build does not, so a green default run is not a green CI.
+Three of the thirteen screenshots do not match the committed bytes when
+regenerated here. `trash.png` and `trash-swept.png` read the wall clock, which
+is known. `contact-detail.png` differs with no visible change, most likely from
+a newer Chromium than the one that rendered the committed images. A diff in
+those images is not by itself a change in the UI.
 
 ## Installing
 
@@ -110,8 +111,8 @@ Download the installer for your platform, verify the `.sha256` beside it, and
 run it. Full instructions in [`docs/INSTALL.md`](../docs/INSTALL.md).
 
 ```sh
-sha256sum -c eeemail_0.5.0_amd64.deb.sha256
-sudo apt install ./eeemail_0.5.0_amd64.deb
+sha256sum -c eeemail_0.6.0_amd64.deb.sha256
+sudo apt install ./eeemail_0.6.0_amd64.deb
 ```
 
 Or unzip `eeemail-windows-amd64.zip` / `eeemail-linux-amd64.zip` and run the app
