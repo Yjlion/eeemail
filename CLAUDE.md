@@ -66,8 +66,10 @@ cargo nextest run -p <crate>                    # add --all-features if the chan
 ```
 
 The crates are `deltachat` (everything in `core/src/email/`), `eeemail-cli` and
-`eeemail-desktop`. Filter nextest further (`cargo nextest run -p deltachat
-email::`) when that is enough. Leave the rest to CI. A release cannot publish
+`eeemail-desktop`. `eeemail-cli` has no tests of its own, so nextest exits 1 on
+it with `no tests to run`; `cargo clippy -p eeemail-cli` is the check there.
+Filter nextest further (`cargo nextest run -p deltachat email::`) when that is
+enough. Leave the rest to CI. A release cannot publish
 until CI has passed on the tagged commit (see below), so the full gate is
 enforced even when it was not run here. Clean `core/target` when a branch is
 done with.

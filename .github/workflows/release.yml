@@ -27,12 +27,10 @@ permissions: {}
 env:
   # Keep in sync with ci.yml.
   RUST_VERSION: 1.97.1
-  # Thin LTO over many codegen units instead of core/Cargo.toml's fat LTO over
-  # one. Overridden here rather than in the manifest so the fork's profile stays
-  # upstream's. It roughly halves the link, which on Windows was most of a
-  # 36-minute leg; the binaries come out slightly larger.
-  CARGO_PROFILE_RELEASE_LTO: thin
-  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
+  # core/Cargo.toml's fat LTO stays. Thin LTO with 16 codegen units was tried in
+  # the rehearsal for ADR 0031: cold, it was no faster (Windows tools 22 min
+  # against 20), and the archives grew by a third. What this workflow saves
+  # comes from parallel legs and main's warm cache, not from the profile.
 
 jobs:
   # Tags only: find main's prebuild of this exact commit, waiting for it if it

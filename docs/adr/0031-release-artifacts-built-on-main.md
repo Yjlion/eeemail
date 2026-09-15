@@ -42,10 +42,12 @@ artefacts already built for its commit, once CI has passed on that commit.**
    downloads the prebuild's packages and publishes them. If there is no usable
    prebuild (none exists, it failed or was cancelled, or its artefacts have
    expired), the tag builds for itself, the same way main does.
-3. **Thin LTO with 16 codegen units**, set through
-   `CARGO_PROFILE_RELEASE_LTO` and `CARGO_PROFILE_RELEASE_CODEGEN_UNITS` in
-   the workflow. `core/Cargo.toml` is untouched, so the fork's profile stays
-   upstream's and the fork-patch ledger does not grow.
+3. **The release profile is unchanged**: `core/Cargo.toml`'s fat LTO over one
+   codegen unit, which is upstream's. The rehearsal for this ADR also tried
+   thin LTO with 16 codegen units. From a cold cache it was no faster (Windows
+   tools took 22 minutes, against 20), and the zips grew from 33 to 45 MB on
+   Linux and from 30 to 39 MB on Windows. The time goes to compiling
+   dependencies, which a warm cache removes, not to the link.
 4. **Rust caches are saved from `main` only**, in both workflows. PRs and tags
    restore main's caches, and no longer write duplicates that push the
    repository past its 10 GB cache limit and evict the caches that matter.
@@ -57,9 +59,10 @@ artefacts already built for its commit, once CI has passed on that commit.**
   "CI before the tag" is enforced by the workflow instead of remembered.
 - **The release notes are still read from the tagged commit.** They must be
   final when the release PR opens, because nothing publishes them any later.
-- **Binaries are somewhat larger** than under fat LTO. For a mail client that
-  spends its time waiting on the network, this trade is worth a release that
-  does not take forty minutes.
+- **The rehearsal, from a cold cache, took 22 minutes against 37**: Windows
+  was 22 (app 17, tools 22, in parallel) and Linux was 10. Later builds on main
+  restore caches that main itself saved, which is where the rest of the saving
+  is expected. That is not yet measured.
 - **Main spends runner time on every push.** The repository is public, so the
   cost is queue time rather than money. `workflow_dispatch` still builds
   without publishing and remains the way to rehearse from a branch.
