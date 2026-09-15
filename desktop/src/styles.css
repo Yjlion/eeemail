@@ -373,7 +373,7 @@ body.preview .sidebar .brand::after { content: "preview"; }
 }
 .overlay-panel .footnote { margin-top: 10px; font-size: 12px; color: var(--text-dim); }
 
-/* --- the composer's formatting mode (ADR 0025) ------------------------- */
+/* --- the composer's formatting mode (ADRs 0025, 0030) ----------------- */
 
 .format-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
 .format-toggle { display: flex; gap: 6px; align-items: center; margin: 0; font-size: 13px; color: var(--text-dim); }
@@ -384,6 +384,13 @@ body.preview .sidebar .brand::after { content: "preview"; }
   border-radius: 6px; background: var(--bg-alt); cursor: pointer;
 }
 .toolbar .tool:hover { background: #e9ebef; }
+.toolbar .tool[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.toolbar .tool-menu {
+  font: inherit; padding: 4px 6px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg-alt); cursor: pointer;
+}
+/* The first menu starts a second group: character styles apart from structure. */
+.toolbar .tool + .tool-menu { margin-left: 8px; }
 /* The formatted body. Styled to match the textarea it replaces, so switching
    mode does not move the message around the screen. */
 .rich {
@@ -395,3 +402,4 @@ body.preview .sidebar .brand::after { content: "preview"; }
 .rich pre { background: var(--bg-alt); padding: 8px 10px; border-radius: 6px; overflow-x: auto; }
 .rich h1, .rich h2, .rich h3 { font-size: 16px; margin: 12px 0 6px; }
 .rich p { margin: 0 0 8px; }
+.rich code { background: var(--bg-alt); padding: 0 3px; border-radius: 4px; }

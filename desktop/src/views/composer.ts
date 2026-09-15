@@ -9,8 +9,9 @@
  *
  * Formatting is a mode, not a second composer. Both modes produce a plain-text
  * body; formatted mode additionally produces the `text/html` alternative, from
- * `richtext.ts` rather than from whatever the browser's editor left in the DOM.
- * See `docs/adr/0025-composed-html.md`.
+ * `richtext.ts` rather than from whatever the editor left in the DOM. The editor
+ * is Squire, and the same filter is what it parses pastes and drafts with.
+ * See `docs/adr/0025-composed-html.md` and `docs/adr/0030-the-composer-edits-with-squire.md`.
  */
 
 import { rpc } from "../client";
@@ -18,7 +19,18 @@ import { state, changed } from "../state";
 import { reload } from "../nav";
 import { escapeHtml } from "../html";
 import { stageAttachment } from "../shell";
-import { compose, fromText, normalizeHref } from "../richtext";
+import Squire from "squire-rte";
+import {
+  ALIGNMENTS,
+  COLOURS,
+  FONTS,
+  HIGHLIGHTS,
+  SIZES,
+  compose,
+  fromText,
+  normalizeHref,
+  sanitizeToFragment,
+} from "../richtext";
 import type { RecipientSet } from "../types";
 
 /** Splits a comma-separated address field, dropping empties. */
@@ -29,18 +41,136 @@ function addresses(value: string): string[] {
     .filter(Boolean);
 }
 
-/** The formatting the toolbar offers, and the command each one runs. */
-const TOOLS: { label: string; title: string; command: string; value?: string }[] = [
-  { label: "B", title: "Bold", command: "bold" },
-  { label: "I", title: "Italic", command: "italic" },
-  { label: "U", title: "Underline", command: "underline" },
-  { label: "S", title: "Strikethrough", command: "strikeThrough" },
-  { label: "H", title: "Heading", command: "formatBlock", value: "h2" },
-  { label: "“ ”", title: "Quote", command: "formatBlock", value: "blockquote" },
-  { label: "• List", title: "Bulleted list", command: "insertUnorderedList" },
-  { label: "1. List", title: "Numbered list", command: "insertOrderedList" },
-  { label: "Code", title: "Code", command: "formatBlock", value: "pre" },
+/** Sets every selected paragraph or heading to `tag`, keeping its content and alignment. */
+function setBlocks(editor: Squire, tag: string): void {
+  // Squire has no heading command. `modifyBlocks` is its way of saying "these
+  // blocks, lifted out; give back what goes in their place", with undo intact.
+  editor.modifyBlocks((frag) => {
+    for (const block of Array.from(frag.querySelectorAll("p, h1, h2, h3"))) {
+      const replacement = document.createElement(tag);
+      for (const attr of Array.from(block.attributes)) {
+        replacement.setAttribute(attr.name, attr.value);
+      }
+      replacement.append(...Array.from(block.childNodes));
+      block.replaceWith(replacement);
+    }
+    return frag;
+  });
+  editor.focus();
+}
+
+/** Asks for a link address, or removes the link the selection is already in. */
+function link(editor: Squire): void {
+  if (editor.hasFormat("A")) {
+    editor.removeLink();
+    return;
+  }
+  const typed = window.prompt("Link address");
+  // Normalised here rather than passed through: someone typing `example.com`
+  // means a link to it, and an href with no scheme is not a link at all once it
+  // leaves this window.
+  const href = typed ? normalizeHref(typed) : "";
+  if (href) editor.makeLink(href);
+}
+
+/** The toolbar's buttons: what each does, and when it shows as pressed. */
+const TOOLS: {
+  label: string;
+  title: string;
+  active: (editor: Squire) => boolean;
+  run: (editor: Squire) => void;
+}[] = [
+  {
+    label: "B",
+    title: "Bold (Ctrl+B)",
+    active: (e) => e.hasFormat("B"),
+    run: (e) => (e.hasFormat("B") ? e.removeBold() : e.bold()),
+  },
+  {
+    label: "I",
+    title: "Italic (Ctrl+I)",
+    active: (e) => e.hasFormat("I"),
+    run: (e) => (e.hasFormat("I") ? e.removeItalic() : e.italic()),
+  },
+  {
+    label: "U",
+    title: "Underline (Ctrl+U)",
+    active: (e) => e.hasFormat("U"),
+    run: (e) => (e.hasFormat("U") ? e.removeUnderline() : e.underline()),
+  },
+  {
+    label: "S",
+    title: "Strikethrough (Ctrl+Shift+7)",
+    active: (e) => e.hasFormat("S"),
+    run: (e) => (e.hasFormat("S") ? e.removeStrikethrough() : e.strikethrough()),
+  },
+  {
+    label: "H",
+    title: "Heading",
+    active: (e) => e.hasFormat("H2"),
+    run: (e) => setBlocks(e, e.hasFormat("H2") ? "P" : "H2"),
+  },
+  {
+    label: "“ ”",
+    title: "Quote (Ctrl+])",
+    active: (e) => e.hasFormat("BLOCKQUOTE"),
+    run: (e) => (e.hasFormat("BLOCKQUOTE") ? e.decreaseQuoteLevel() : e.increaseQuoteLevel()),
+  },
+  {
+    label: "• List",
+    title: "Bulleted list (Ctrl+Shift+8)",
+    active: (e) => e.hasFormat("UL"),
+    run: (e) => (e.hasFormat("UL") ? e.removeList() : e.makeUnorderedList()),
+  },
+  {
+    label: "1. List",
+    title: "Numbered list (Ctrl+Shift+9)",
+    active: (e) => e.hasFormat("OL"),
+    run: (e) => (e.hasFormat("OL") ? e.removeList() : e.makeOrderedList()),
+  },
+  {
+    label: "Code",
+    title: "Code (Ctrl+D)",
+    active: (e) => e.hasFormat("CODE") || e.hasFormat("PRE"),
+    run: (e) => e.toggleCode(),
+  },
+  { label: "Link", title: "Link", active: (e) => e.hasFormat("A"), run: link },
 ];
+
+/**
+ * The toolbar's menus. Their options are the lists `richtext.ts` checks against,
+ * so nothing here can offer a style the filter would strip on send.
+ */
+const MENUS: {
+  label: string;
+  options: { label: string; value: string }[];
+  run: (editor: Squire, value: string | null) => void;
+}[] = [
+  { label: "Font", options: FONTS, run: (e, v) => e.setFontFace(v) },
+  { label: "Size", options: SIZES, run: (e, v) => e.setFontSize(v) },
+  { label: "Colour", options: COLOURS, run: (e, v) => e.setTextColor(v) },
+  { label: "Highlight", options: HIGHLIGHTS, run: (e, v) => e.setHighlightColor(v) },
+  {
+    label: "Align",
+    options: ALIGNMENTS.map((a) => ({ label: a[0]!.toUpperCase() + a.slice(1), value: a })),
+    // An empty alignment is Squire's way of removing one.
+    run: (e, v) => e.setTextAlignment(v ?? ""),
+  },
+];
+
+/**
+ * The editor of the composer on screen, if there is one.
+ *
+ * Kept so it can be destroyed: `paint()` replaces the whole screen on every
+ * change, and Squire listens on the document as well as on its own root, so an
+ * editor that is merely detached is still attached to something.
+ */
+let current: Squire | null = null;
+
+function closeEditor(): void {
+  current?.destroy();
+  current = null;
+}
 
 export function renderComposer(el: HTMLElement): void {
   const draft = state.composerDraft ?? {
@@ -80,12 +210,23 @@ export function renderComposer(el: HTMLElement): void {
         </label>
         <div class="toolbar" id="toolbar" ${formatted ? "" : "hidden"}>
           ${TOOLS.map(
-            (tool) =>
-              `<button type="button" class="tool" data-command="${tool.command}"
-                       data-value="${tool.value ?? ""}"
+            (tool, i) =>
+              `<button type="button" class="tool" data-tool="${i}" aria-pressed="false"
                        title="${escapeHtml(tool.title)}">${escapeHtml(tool.label)}</button>`,
           ).join("")}
-          <button type="button" class="tool" data-command="link" title="Link">Link</button>
+          ${MENUS.map(
+            (menu, i) =>
+              `<select class="tool-menu" data-menu="${i}" title="${escapeHtml(menu.label)}">
+                 <option value="" hidden selected>${escapeHtml(menu.label)}</option>
+                 <option value="default">Default</option>
+                 ${menu.options
+                   .map(
+                     (option) =>
+                       `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`,
+                   )
+                   .join("")}
+               </select>`,
+          ).join("")}
         </div>
       </div>
       <textarea name="body" rows="16" placeholder="Write your message"
@@ -109,10 +250,28 @@ export function renderComposer(el: HTMLElement): void {
   const plain = form.elements.namedItem("body") as HTMLTextAreaElement;
   const toggle = el.querySelector<HTMLInputElement>("#formatted")!;
 
-  // Set as markup, not as a template value: this is the one place in the app
-  // that deliberately puts HTML into the app document, and it is HTML we
-  // produced ourselves from the user's own draft, never from a message.
-  if (draft.html !== null) rich.innerHTML = draft.html;
+  closeEditor();
+  const editor = new Squire(rich, {
+    // The editor's blocks in the shape the wire gets them, rather than `<div>`s
+    // renamed on the way out.
+    blockTag: "P",
+    // Squire would otherwise reach for a global DOMPurify, and throw without
+    // one. Ours is the filter that decides what is sent, so a paste is shown as
+    // it will go out.
+    sanitizeToDOMFragment: sanitizeToFragment,
+  });
+  current = editor;
+  // Subscript and superscript are not in the whitelist. A shortcut that
+  // formats text and then silently loses the formatting on send is worse than
+  // one that does nothing.
+  for (const key of ["Ctrl-Shift-5", "Ctrl-Shift-6", "Meta-Shift-5", "Meta-Shift-6"]) {
+    editor.setKeyHandler(key, null);
+  }
+
+  // This is the one place in the app that deliberately puts HTML into the app
+  // document. It is HTML we produced ourselves from the user's own draft, and
+  // `setHTML` passes it through the send filter on the way in regardless.
+  if (draft.html !== null) editor.setHTML(draft.html);
 
   const readSet = (): RecipientSet => ({
     to: addresses((form.elements.namedItem("to") as HTMLInputElement).value),
@@ -167,37 +326,47 @@ export function renderComposer(el: HTMLElement): void {
     if (formatted) {
       // Carrying the text across rather than starting empty. Switching mode is
       // a decision about presentation, not about discarding what was written.
-      rich.innerHTML = fromText(plain.value);
+      editor.setHTML(fromText(plain.value));
     } else {
-      plain.value = compose(rich).text;
+      plain.value = compose(editor.getHTML()).text;
     }
     toolbar.hidden = !formatted;
     rich.hidden = !formatted;
     plain.hidden = formatted;
-    (formatted ? rich : plain).focus();
+    if (formatted) editor.focus();
+    else plain.focus();
   });
 
-  for (const tool of toolbar.querySelectorAll<HTMLButtonElement>("button.tool")) {
+  const buttons = Array.from(toolbar.querySelectorAll<HTMLButtonElement>("button.tool"));
+  for (const button of buttons) {
+    const tool = TOOLS[Number(button.dataset["tool"])]!;
     // `mousedown`, not `click`: a click moves focus out of the editor first, and
-    // a formatting command with no selection does nothing.
-    tool.addEventListener("mousedown", (event) => {
+    // the caret the command should act on goes with it.
+    button.addEventListener("mousedown", (event) => {
       event.preventDefault();
-      const command = tool.dataset["command"] ?? "";
-      if (command === "link") {
-        const typed = window.prompt("Link address");
-        // Normalised here rather than passed through: someone typing
-        // `example.com` means a link to it, and an href with no scheme is not a
-        // link at all once it leaves this window.
-        const href = typed ? normalizeHref(typed) : "";
-        if (href) document.execCommand("createLink", false, href);
-        return;
-      }
-      // `execCommand` is deprecated and its output differs between engines,
-      // which is exactly why nothing it produces reaches the wire: `richtext.ts`
-      // re-emits the body from the DOM as a fixed set of tags on send.
-      document.execCommand(command, false, tool.dataset["value"] || undefined);
+      tool.run(editor);
     });
   }
+
+  for (const select of toolbar.querySelectorAll<HTMLSelectElement>("select.tool-menu")) {
+    const menu = MENUS[Number(select.dataset["menu"])]!;
+    // A select takes focus, unlike the buttons. Squire keeps the last selection
+    // while it is blurred, so the command still lands on what was selected.
+    select.addEventListener("change", () => {
+      menu.run(editor, select.value === "default" ? null : select.value);
+      // Back to the label, so the menu names what it does rather than what was
+      // last picked -- which may not describe the text the caret is in now.
+      select.value = "";
+      editor.focus();
+    });
+  }
+
+  // Pressed state follows the caret, so the toolbar says what a click will undo.
+  editor.addEventListener("pathChange", () => {
+    buttons.forEach((button, i) => {
+      button.setAttribute("aria-pressed", String(TOOLS[i]!.active(editor)));
+    });
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -211,7 +380,7 @@ export function renderComposer(el: HTMLElement): void {
       return;
     }
 
-    const body = formatted ? compose(rich) : { text: plain.value, html: null };
+    const body = formatted ? compose(editor.getHTML()) : { text: plain.value, html: null };
     const file = (form.elements.namedItem("attachment") as HTMLInputElement).files?.[0];
     const submit = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
     submit.disabled = true;
@@ -233,6 +402,7 @@ export function renderComposer(el: HTMLElement): void {
         // ordinary message identical to one sent before this control existed.
         (form.elements.namedItem("importance") as HTMLSelectElement).value,
       ]);
+      closeEditor();
       state.composerDraft = null;
       state.screen = null;
       state.view = { kind: "tag", tag: "sent" };
@@ -251,6 +421,7 @@ export function renderComposer(el: HTMLElement): void {
   form.querySelector<HTMLButtonElement>("button[data-act='cancel']")!.addEventListener(
     "click",
     () => {
+      closeEditor();
       state.composerDraft = null;
       state.screen = null;
       changed();

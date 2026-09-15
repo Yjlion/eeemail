@@ -36,11 +36,12 @@ Testing: [`../testing.md`](../testing.md)
 | [0022](0022-desktop-distribution.md) | eeemail ships as a platform installer, not as a folder of executables | Accepted · archive contents amended by [0024](0024-portable-archives.md) |
 | [0023](0023-first-launch-disclosure.md) | The application says what it is, before it asks for a mail password | Accepted |
 | [0024](0024-portable-archives.md) | The release archive holds the app, not only the tools, and runs unzipped | Accepted |
-| [0025](0025-composed-html.md) | Composed HTML is a whitelisted alternative, never a replacement | Accepted |
+| [0025](0025-composed-html.md) | Composed HTML is a whitelisted alternative, never a replacement | Accepted · editor and whitelist amended by [0030](0030-the-composer-edits-with-squire.md) |
 | [0026](0026-several-accounts-in-one-window.md) | Several accounts in one window, all of them fetching | Accepted |
 | [0027](0027-a-blocklist-that-trashes-on-arrival.md) | A blocked sender's mail is trashed on arrival, recoverably | Accepted |
 | [0028](0028-contacts-are-an-address-book.md) | Contacts are an address book, with records and categories of their own | Accepted |
 | [0029](0029-importance-travels-on-the-wire.md) | Importance is sent and read as mail headers, and absent when normal | Accepted |
+| [0030](0030-the-composer-edits-with-squire.md) | The composer edits with Squire, and sends a little more style | Accepted |
 
 ## Deferred
 
