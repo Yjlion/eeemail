@@ -1,7 +1,12 @@
 name: Release
 
+# Every push to main builds the release artefacts. Pushing a `v*` tag then
+# publishes the artefacts already built for that commit, once CI has passed on
+# it, so a release no longer means tagging and then waiting forty minutes. See
+# docs/adr/0031-release-artifacts-built-on-main.md.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   # Buildable on demand, so a release can be rehearsed without cutting a tag.
   workflow_dispatch:
@@ -11,24 +16,97 @@ on:
         required: false
         type: string
 
-permissions:
-  contents: write
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A newer push to main supersedes an older prebuild. A tag is never
+  # cancelled; if the prebuild it was waiting for is, it builds for itself.
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
+permissions: {}
 
 env:
   # Keep in sync with ci.yml.
   RUST_VERSION: 1.97.1
+  # Thin LTO over many codegen units instead of core/Cargo.toml's fat LTO over
+  # one. Overridden here rather than in the manifest so the fork's profile stays
+  # upstream's. It roughly halves the link, which on Windows was most of a
+  # 36-minute leg; the binaries come out slightly larger.
+  CARGO_PROFILE_RELEASE_LTO: thin
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
 
 jobs:
+  # Tags only: find main's prebuild of this exact commit, waiting for it if it
+  # is still running. An empty `run_id` means there is nothing usable to reuse
+  # and `build` runs here instead.
+  reuse:
+    name: Find the prebuild
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    permissions:
+      actions: read
+    outputs:
+      run_id: ${{ steps.find.outputs.run_id }}
+    steps:
+      - id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deadline=$((SECONDS + 75 * 60))
+          while :; do
+            run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml \
+              --branch main --event push --commit "$GITHUB_SHA" --limit 1 \
+              --json databaseId,status,conclusion,url --jq '.[0] // empty')
+            if [ -z "$run" ]; then
+              echo "no prebuild of $GITHUB_SHA on main; building here"
+              echo "run_id=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            id=$(jq -r .databaseId <<<"$run")
+            status=$(jq -r .status <<<"$run")
+            conclusion=$(jq -r .conclusion <<<"$run")
+            if [ "$status" = completed ]; then
+              break
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "prebuild $(jq -r .url <<<"$run") is still running after 75 minutes; building here"
+              echo "run_id=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "prebuild $(jq -r .url <<<"$run") is $status; waiting"
+            sleep 30
+          done
+          # Artefacts expire. Reuse only a run whose packages are all still there.
+          packages=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" \
+            --jq '[.artifacts[] | select(.expired | not) | select(.name | startswith("eeemail-"))] | length')
+          if [ "$conclusion" = success ] && [ "$packages" = 2 ]; then
+            echo "reusing prebuild $(jq -r .url <<<"$run")"
+            echo "run_id=$id" >> "$GITHUB_OUTPUT"
+          else
+            echo "prebuild $(jq -r .url <<<"$run") is $conclusion with $packages packages; building here"
+            echo "run_id=" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The desktop app and the two headless binaries are separate cargo
+  # invocations that unify features differently, so `deltachat` was compiled
+  # twice, one after the other, in each leg. As separate jobs they compile in
+  # parallel instead.
   build:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.platform.name }} ${{ matrix.role }}
+    needs: reuse
+    if: >-
+      !cancelled() &&
+      (github.ref_type != 'tag' || (needs.reuse.result == 'success' && needs.reuse.outputs.run_id == ''))
+    runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 120
+    permissions:
+      contents: read
     strategy:
       # One platform failing must not cancel the other: a partial release is
       # easier to complete than to reconstruct.
       fail-fast: false
       matrix:
-        include:
+        platform:
           - name: linux-amd64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
@@ -37,6 +115,7 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
             bundles: nsis
+        role: [app, tools]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -48,7 +127,7 @@ jobs:
       # is no system OpenSSL to find on either platform. Only the Linux webview
       # has to be installed, and only for the desktop shell.
       - name: Install Linux desktop dependencies
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.role == 'app'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev \
@@ -58,17 +137,29 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/setup-nasm@v1
 
-      - run: rustup toolchain install $RUST_VERSION --profile minimal --target ${{ matrix.target }}
+      - run: rustup toolchain install $RUST_VERSION --profile minimal --target ${{ matrix.platform.target }}
         shell: bash
       - run: rustup override set $RUST_VERSION
         shell: bash
 
+      # Saved from main only. A tag can restore the default branch's caches but
+      # not another tag's, so a cache saved under a tag was never read again.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
-          key: ${{ matrix.target }}
+          key: ${{ matrix.platform.target }}-${{ matrix.role }}
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+      # The two headless binaries. The desktop app is built by `tauri build`
+      # instead, because `cargo build` produces an executable and this release
+      # has to produce something a launcher can install.
+      - name: Build the headless binaries
+        if: matrix.role == 'tools'
+        working-directory: core
+        run: cargo build --release --locked --target ${{ matrix.platform.target }} -p eeemail-cli -p deltachat-rpc-server
 
       - uses: actions/setup-node@v4
+        if: matrix.role == 'app'
         with:
           node-version: 22
           cache: npm
@@ -78,17 +169,11 @@ jobs:
       # and for the `tsc --noEmit` inside it: a type error should stop a release
       # before it spends twenty minutes compiling the engine.
       - name: Install and check the frontend
+        if: matrix.role == 'app'
         working-directory: desktop
         run: |
           npm ci
           npm run build
-
-      # The two headless binaries. The desktop app is built by `tauri build`
-      # below instead, because `cargo build` produces an executable and this
-      # release has to produce something a launcher can install.
-      - name: Build the headless binaries
-        working-directory: core
-        run: cargo build --release --locked --target ${{ matrix.target }} -p eeemail-cli -p deltachat-rpc-server
 
       # Installers, not a loose executable: a .deb or an .AppImage registers a
       # desktop entry and an icon, which is what makes eeemail something you
@@ -98,6 +183,7 @@ jobs:
       # runner without rpm tooling cannot fail a release over a bundle nobody
       # asked for.
       - name: Build the desktop app
+        if: matrix.role == 'app'
         working-directory: desktop
         env:
           # `linuxdeploy`, which the AppImage bundler drives, is itself an
@@ -107,7 +193,7 @@ jobs:
           # instead of mounting is the documented way out and costs a little
           # disk. Harmless on Windows, where nothing reads it.
           APPIMAGE_EXTRACT_AND_RUN: 1
-        run: npm run tauri build -- --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+        run: npm run tauri build -- --target ${{ matrix.platform.target }} --bundles ${{ matrix.platform.bundles }}
 
       # v0.3.0 shipped an app whose ACL compiled to `{}`, so `listen()` was
       # refused and the frontend never received an engine event.
@@ -117,6 +203,7 @@ jobs:
       # release workflow runs no tests at all, and because the generated file is
       # what the shipped binary embeds.
       - name: The event stream is granted
+        if: matrix.role == 'app'
         shell: bash
         run: |
           acl=desktop/src-tauri/gen/schemas/capabilities.json
@@ -126,15 +213,79 @@ jobs:
             exit 1
           fi
 
-      - name: Stage artifacts
+      # What `package` needs from this leg, and nothing else. `tauri build`
+      # renames cargo's `eeemail-desktop` to `mainBinaryName` after compiling,
+      # so the app is `eeemail`.
+      - name: Collect
         shell: bash
         run: |
           set -euo pipefail
-          out="eeemail-${{ matrix.name }}"
-          mkdir -p "dist/$out"
-          bin="core/target/${{ matrix.target }}/release"
+          bin="core/target/${{ matrix.platform.target }}/release"
           suffix=""
           if [ "${{ runner.os }}" = "Windows" ]; then suffix=".exe"; fi
+          mkdir -p out
+          if [ "${{ matrix.role }}" = app ]; then
+            mkdir -p out/installers
+            cp "$bin/eeemail$suffix" out/
+            # Installers, flattened out of Tauri's per-format directories so
+            # the release page lists files rather than paths. The WebView2
+            # bootstrapper the NSIS bundler embeds lands under `bundle/` too,
+            # and is Microsoft's to publish rather than ours.
+            find "$bin/bundle" -type f \
+              \( -name '*.deb' -o -name '*.AppImage' -o -name '*.exe' -o -name '*.msi' \) \
+              -not -name 'MicrosoftEdgeWebview2Setup.exe' \
+              -exec cp {} out/installers/ \;
+          else
+            cp "$bin/eeemail-cli$suffix" "$bin/deltachat-rpc-server$suffix" out/
+          fi
+          ls -laR out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.role }}-${{ matrix.platform.name }}
+          path: out/
+          if-no-files-found: error
+          # Intermediate: `package` turns these into what is published.
+          retention-days: 3
+
+  package:
+    name: Package ${{ matrix.name }}
+    needs: build
+    # Per platform, so a Linux package still gets made when Windows failed.
+    if: ${{ !cancelled() && needs.build.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-amd64
+            suffix: ""
+          - name: windows-amd64
+            suffix: .exe
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          show-progress: false
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-${{ matrix.name }}
+          path: app
+      - uses: actions/download-artifact@v4
+        with:
+          name: tools-${{ matrix.name }}
+          path: tools
+
+      - name: Stage artifacts
+        run: |
+          set -euo pipefail
+          out="eeemail-${{ matrix.name }}"
+          suffix="${{ matrix.suffix }}"
+          mkdir -p "dist/$out"
 
           # All three binaries, the app first. Through v0.3.0 this archive held
           # only the two tools, and the app shipped as an installer alone --
@@ -142,13 +293,13 @@ jobs:
           # and so no way to try it, or to reproduce a bug in it, on a machine
           # you would rather not install onto. See
           # docs/adr/0024-portable-archives.md.
-          #
-          # `tauri build` renames cargo's `eeemail-desktop` to `mainBinaryName`
-          # after compiling, so `eeemail$suffix` is already sitting beside the
-          # tools and nothing extra has to be built for this.
-          for program in eeemail eeemail-cli deltachat-rpc-server; do
-            cp "$bin/$program$suffix" "dist/$out/"
-          done
+          cp "app/eeemail$suffix" "dist/$out/"
+          cp "tools/eeemail-cli$suffix" "tools/deltachat-rpc-server$suffix" "dist/$out/"
+          # Artefact upload does not keep the executable bit, and a portable
+          # Linux archive whose programs will not run is not portable.
+          if [ -z "$suffix" ]; then
+            chmod +x "dist/$out/eeemail" "dist/$out/eeemail-cli" "dist/$out/deltachat-rpc-server"
+          fi
           cp LICENSE NOTICE README.md docs/INSTALL.md docs/PORTABLE.md "dist/$out/"
 
           # The marker that moves the profile into this folder. It ships here
@@ -157,7 +308,7 @@ jobs:
           # meet on one machine.
           touch "dist/$out/eeemail-portable"
 
-          if [ "${{ runner.os }}" = "Windows" ]; then
+          if [ "${{ matrix.name }}" = windows-amd64 ]; then
             cp scripts/eeemail.cmd "dist/$out/"
 
             # The one thing a Windows portable build cannot do without:
@@ -192,38 +343,18 @@ jobs:
             fi
           fi
 
-          ( cd dist
-            if [ "${{ runner.os }}" = "Windows" ]; then
-              7z a "$out.zip" "$out"
-            else
-              # `zip`, not `7z`: ubuntu-latest ships the former, not the latter.
-              zip -qr "$out.zip" "$out"
-            fi )
-
-          # Installers, flattened out of Tauri's per-format directories so the
-          # release page lists files rather than paths. The WebView2
-          # bootstrapper the NSIS bundler embeds lands under `bundle/` too, and
-          # is Microsoft's to publish rather than ours.
-          bundle="$bin/bundle"
-          find "$bundle" -type f \
-            \( -name '*.deb' -o -name '*.AppImage' -o -name '*.exe' -o -name '*.msi' \) \
-            -not -name 'MicrosoftEdgeWebview2Setup.exe' \
-            -exec cp {} dist/ \;
+          ( cd dist && zip -qr "$out.zip" "$out" )
+          cp app/installers/* dist/
           ls -la dist
 
       # A checksum per archive, so a download can be verified without trusting
       # the transport it arrived over.
       - name: Checksum
-        shell: bash
         working-directory: dist
         run: |
           for f in *.zip *.deb *.AppImage *.exe *.msi; do
             [ -e "$f" ] || continue
-            if command -v sha256sum >/dev/null; then
-              sha256sum "$f" > "$f.sha256"
-            else
-              shasum -a 256 "$f" > "$f.sha256"
-            fi
+            sha256sum "$f" > "$f.sha256"
           done
 
       - uses: actions/upload-artifact@v4
@@ -238,14 +369,64 @@ jobs:
             dist/*.sha256
           if-no-files-found: error
 
+  # Tags only: a release is published only from a commit CI passed on. This was
+  # a rule the person tagging had to remember; now the workflow waits for it,
+  # so the tag can go on the moment the release PR is merged.
+  gate:
+    name: CI passed on this commit
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    permissions:
+      actions: read
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deadline=$((SECONDS + 60 * 60))
+          while :; do
+            run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+              --event push --commit "$GITHUB_SHA" --limit 1 \
+              --json status,conclusion,url --jq '.[0] // empty')
+            if [ -z "$run" ]; then
+              # CI starts within seconds of a push to main. Nothing after ten
+              # minutes means this commit was never pushed to main.
+              if [ "$SECONDS" -ge 600 ]; then
+                echo "no CI run on main for $GITHUB_SHA; tag a commit that is on main" >&2
+                exit 1
+              fi
+              echo "no CI run for $GITHUB_SHA yet; waiting"
+            elif [ "$(jq -r .status <<<"$run")" = completed ]; then
+              conclusion=$(jq -r .conclusion <<<"$run")
+              if [ "$conclusion" = success ]; then
+                echo "CI passed: $(jq -r .url <<<"$run")"
+                exit 0
+              fi
+              echo "CI is $conclusion on $GITHUB_SHA: $(jq -r .url <<<"$run")" >&2
+              echo "fix or re-run it, then re-run this workflow's failed jobs" >&2
+              exit 1
+            else
+              echo "CI $(jq -r .url <<<"$run") is $(jq -r .status <<<"$run"); waiting"
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "CI has not finished after an hour" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+
   release:
     name: Publish release
-    needs: build
+    needs: [reuse, package, gate]
+    if: >-
+      !cancelled() && github.ref_type == 'tag' && needs.gate.result == 'success' &&
+      (needs.package.result == 'success' ||
+       (needs.package.result == 'skipped' && needs.reuse.outputs.run_id != ''))
     runs-on: ubuntu-latest
-    # Only a tag push publishes. A manual run builds and uploads artifacts so
-    # the release can be rehearsed without creating one.
-    if: startsWith(github.ref, 'refs/tags/v')
     timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -253,12 +434,16 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
+          pattern: eeemail-*
           path: dist
           merge-multiple: true
+          run-id: ${{ needs.reuse.outputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Publish
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          ls -la dist
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "eeemail ${GITHUB_REF_NAME}" \
