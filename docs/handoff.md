@@ -173,6 +173,22 @@ result is exit 137 with no output at all, which looks exactly like a crash and
 is not one — it cost two wrong diagnoses (OOM, then reduced parallelism) before
 the cause was checked rather than guessed. **Run cargo in the background.**
 
+**In the background it has a second way to die, and this one *is* memory.**
+Preparing v0.6.0, the gate was killed twice a few minutes into compiling, and
+each time the whole session went with it — reported as a container restart,
+with no exit code and no output past `Compiling deltachat-jsonrpc`. The kernel
+log named it: `Out of memory: Killed process … (rustc)`, a global OOM kill on a
+machine with 5 GB and no swap, while `deltachat` and `deltachat-jsonrpc`
+compiled side by side. The session's scope was what the kernel reaped. That is
+very likely also what killed nextest twice during the seven features, recorded
+above without a cause.
+
+So the two failures look alike and are not the same: exit 137 in the foreground
+is the time cap, and a restart in the background is memory. Check
+`journalctl -k | grep -i oom` rather than guessing between them, and on this
+machine run cargo with **`CARGO_BUILD_JOBS=1`** (and `nextest --test-threads 2`).
+It does not change build flags, so the `target/` cache stays valid.
+
 ## v0.3.1 — what installing v0.3.0 found
 
 The step this document listed as next ("Install v0.3.0 and launch it from a
