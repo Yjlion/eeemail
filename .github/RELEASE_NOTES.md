@@ -97,7 +97,9 @@ cd desktop && npm run check && npm run build      clean
 ./scripts/screenshots.sh                          13 images
 ```
 
-CI results for this commit are added once the release PR's run completes.
+CI is green across all seven jobs, Windows and the test mail server included,
+on `6e4d884f8`, the merge of the release PR. The tagged commit differs from it
+only in this paragraph, and was tagged after its own CI run passed.
 
 Three of the thirteen screenshots do not match the committed bytes when
 regenerated here. `trash.png` and `trash-swept.png` read the wall clock, which
