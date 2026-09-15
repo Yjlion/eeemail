@@ -50,6 +50,11 @@ Use `cargo nextest`, not `cargo test` — upstream's clock mock is process-globa
 so a single-process run fails on a green tree. Install with
 `cargo install cargo-nextest --locked`. See [`testing.md`](testing.md).
 
+That is the full gate, and CI runs all of it. On a small machine, run only the
+crates you touched (`cargo nextest run -p <crate>`) and let CI run the rest:
+a release cannot publish from a commit CI has not passed on
+([0031](adr/0031-release-artifacts-built-on-main.md)).
+
 ## Running it
 
 **The desktop app**, against a real account:

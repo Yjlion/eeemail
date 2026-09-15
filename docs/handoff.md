@@ -402,6 +402,12 @@ read off a build log: checksums verify, the `.deb` carries `usr/bin/eeemail`,
 its desktop entry and icons at three sizes, the `.AppImage` extracts to a valid
 ELF, and the `.exe` is a real NSIS installer.
 
+> **Superseded after v0.6.0** by
+> [0031](adr/0031-release-artifacts-built-on-main.md): every push to `main`
+> prebuilds the artefacts, and a `v*` tag publishes them once CI has passed on
+> the tagged commit. The paragraph below describes the release path up to
+> v0.6.0.
+
 The release path is `push` of a `v*` tag. `workflow_dispatch` builds and uploads
 the same artefacts **without** publishing, which is the rehearsal, and it is
 worth doing every time — it is how the `.AppImage` was first proved buildable.
