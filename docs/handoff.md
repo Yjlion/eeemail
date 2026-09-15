@@ -5,7 +5,43 @@ and published, **and does not work** — see immediately below. The eight deskto
 issues #19–#26 landed after that; what they taught is in
 [what the eight desktop features taught](#what-the-eight-desktop-features-taught).
 Seven more features landed on `seven-features` after *that*; what they taught is
-in [what the seven features taught](#what-the-seven-features-taught).
+in [what the seven features taught](#what-the-seven-features-taught). The
+composer then moved onto Squire; see
+[the composer on Squire](#the-composer-on-squire).
+
+## The composer on Squire
+
+The formatted mode is a Squire editor with colour, highlight, font, size and
+alignment added to the toolbar. [ADR 0030](adr/0030-the-composer-edits-with-squire.md)
+amends 0025. No engine or IPC change: `send_email` still takes `text` and `html`.
+
+**Squire does not work out of the box without DOMPurify.** Its default
+`sanitizeToDOMFragment` calls a global `DOMPurify` and throws on the first
+`setHTML`. It is handed `richtext.ts`'s `sanitizeToFragment` instead, which is
+also the filter the message goes out through — so a paste is shown as it will
+be sent. Removing that config option does not fail to compile; it fails the
+first time the composer opens.
+
+**The CSS parser does not normalise what you would guess.** Two style values
+survived review and failed the first time they ran in a browser: `color: red`
+stays the keyword `red` rather than becoming `rgb()`, so a colour check that
+only knew `rgb()` stripped every named colour; and a `background:` shorthand
+leaves `background-color: initial`, which a letters-only keyword check accepted
+as a colour. Anything in `richtext.ts` that reads `style.getPropertyValue` needs
+checking against a real browser, not against what the value was set to.
+
+**What was verified, and what was not.** A throwaway bundle of `richtext.ts` and
+Squire ran in headless Chromium: 30 checks, covering `onerror`, `<script>` and
+`<style>` text, `javascript:` hrefs, `url()` in styles, free-text font families,
+attribute injection, each new style surviving to the wire without a `class`,
+recolouring replacing rather than nesting, and a paste of a whole document. The
+demo build's composer was then driven over the DevTools protocol through every
+button and menu, the link prompt, Ctrl+B, Ctrl+Z and both mode switches.
+`npm run check`, `npm run build` and the 13 screenshots pass; `composer.png` is
+unchanged, because it photographs the unformatted mode. **Nothing was run in
+WebKitGTK or WebView2** — no display was available — and none of those checks
+were committed, because the frontend has no test runner. The sanitiser is the
+most security-relevant code in `desktop/src/` and has no automated guard.
 
 ## The seven features
 

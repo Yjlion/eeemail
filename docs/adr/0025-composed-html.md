@@ -108,3 +108,15 @@ related — and the alternative is a Markdown dependency in the renderer.
 **Sending HTML only, with no plain-text part.** What a lot of commercial mail
 does. Rejected outright: it turns a formatting choice into a delivery failure
 for anyone whose client shows `text/plain`.
+
+## Amendment — 2026-09-15
+
+**The editing layer and the whitelist have changed. Everything else here stands.**
+
+The formatted mode is now a [Squire](https://github.com/fastmail/Squire) editor
+rather than `contenteditable` with `execCommand`, so "no dependency was added"
+no longer holds. The whitelist gains `<span>` and a `style` attribute rebuilt
+from a few checked properties (colour, highlight, generic font family, keyword
+font size, alignment), and the same filter now also parses everything Squire
+loads or has pasted into it. The `text/plain` part, the unformatted-mail rule and
+the link rules are unchanged. See [0030](0030-the-composer-edits-with-squire.md).

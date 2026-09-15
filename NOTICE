@@ -33,6 +33,12 @@ and its ecosystem. Each retains its own license.
     https://github.com/chatmail/async-imap
   async-smtp                             MIT OR Apache-2.0
 
+The desktop application bundles:
+
+  Squire (squire-rte)                    MIT
+    https://github.com/fastmail/Squire
+    Rich-text editor used by the composer's formatted mode.
+
 Protocol specifications implemented:
 
   SecureJoin      https://securejoin.delta.chat/          (CC)
