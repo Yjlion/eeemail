@@ -48,6 +48,32 @@ cargo nextest run --workspace --all-features  # ~1386 tests
 `--all-features` carries ten tests the default build does not. A green default
 run is not a green CI.
 
+### What to run locally
+
+**Do not run the full gate on the development server.** It has 3 cores and
+5.8 GB of RAM, and the gate below compiles the workspace five different ways.
+Running it there filled the disk (`core/target` reached 87 GB) and got `rustc`
+OOM-killed. The OOM kill used to take the agent's whole tmux scope with
+it, until the user's systemd was set to `DefaultOOMPolicy=continue`.
+`~/.cargo/config.toml` caps cargo at two jobs. Locally, run only what the change
+touches:
+
+```sh
+cd core
+cargo fmt --all -- --check
+cargo clippy -p <crate> --all-targets -- -D warnings
+cargo nextest run -p <crate>                    # add --all-features if the change is feature-gated
+```
+
+The crates are `deltachat` (everything in `core/src/email/`), `eeemail-cli` and
+`eeemail-desktop`. `eeemail-cli` has no tests of its own, so nextest exits 1 on
+it with `no tests to run`; `cargo clippy -p eeemail-cli` is the check there.
+Filter nextest further (`cargo nextest run -p deltachat email::`) when that is
+enough. Leave the rest to CI. A release cannot publish
+until CI has passed on the tagged commit (see below), so the full gate is
+enforced even when it was not run here. Clean `core/target` when a branch is
+done with.
+
 Full gate, all of which CI runs:
 
 ```sh
@@ -64,6 +90,19 @@ The live passes need Docker and a built `deltachat-rpc-server`; see
 `docs/handoff.md` and [`docs/DESIGN.md`](docs/DESIGN.md#verification).
 
 `test_cache_is_cleared_when_io_is_started` is flaky upstream and is not ours.
+
+CI skips the Rust jobs on a pull request that touches only markdown or
+`docs/`. Pushes to `main` always run everything.
+
+## Releasing
+
+Every push to `main` prebuilds the release artefacts (`release.yml`). To
+release: merge the release PR, then push the tag straight away:
+`git tag vX.Y.Z && git push origin vX.Y.Z`. The tag's run waits for CI and for
+the prebuild of that commit, and publishes only if CI passed. There is nothing
+to watch. `.github/RELEASE_NOTES.md` is published from the tagged commit, so it
+must be final in the release PR, with no placeholders. See
+[ADR 0031](docs/adr/0031-release-artifacts-built-on-main.md).
 
 ## Fork discipline
 
