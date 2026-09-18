@@ -149,6 +149,23 @@ export type RecipientSet = {
   bcc: string[];
 };
 
+/** What the composer's padlock should say for a recipient set. */
+export type SendReadiness = {
+  /** The strictest mode among the global setting and every recipient's override. */
+  mode: EncryptionMode;
+  /** Addresses there is no key for, as typed. */
+  missing: string[];
+  /** The policy says end-to-end only, so the padlock may not be opened. */
+  locked: boolean;
+};
+
+/** The composer's choices for one message, as `send_email` takes them. */
+export type SendOptions = {
+  encryption: "auto" | "required" | "plaintext";
+  /** The composer placed the signature, or the user removed it: do not append one. */
+  signatureInBody: boolean;
+};
+
 /** What at-rest protection is actually in force. Rendered verbatim. */
 export type AtRestProtection = {
   databaseEncrypted: boolean;

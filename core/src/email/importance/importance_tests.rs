@@ -51,6 +51,7 @@ async fn sent_with(importance: Importance) -> Result<String> {
         None,
         None,
         importance,
+        &Default::default(),
     )
     .await?;
     Ok(alice.pop_sent_msg().await.payload().to_string())

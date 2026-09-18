@@ -285,6 +285,30 @@ pub(crate) async fn prepare_send(
     let global = EncryptionMode::load(context).await?;
     let mode = EncryptionMode::effective(context, contacts).await?;
 
+    // The composer's padlock. `compose::send` has already refused what the
+    // policy does not allow; this repeats the one refusal that matters,
+    // because a cleartext message where the policy says end-to-end only must
+    // not go out whoever asked for it.
+    // See `docs/adr/0032-composer-send-options.md`.
+    match super::sendopts::load(context, msg.id).await?.encryption {
+        super::sendopts::EncryptionChoice::Auto => {}
+        super::sendopts::EncryptionChoice::Plaintext => {
+            ensure!(
+                mode != EncryptionMode::Strict,
+                "cannot send unencrypted: this conversation is set to end-to-end only"
+            );
+            msg.param.set_int(Param::ForcePlaintext, 1);
+            return Ok(mode);
+        }
+        super::sendopts::EncryptionChoice::Required => {
+            // `compose::send` checked every recipient for a key. Pinning the
+            // message here is what stops a key lost in between from turning
+            // into a quiet cleartext send.
+            msg.param.set_int(Param::GuaranteeE2ee, 1);
+            return Ok(mode);
+        }
+    }
+
     match mode {
         // Global strictness is core's job; see above.
         EncryptionMode::Strict if global == EncryptionMode::Strict => {}

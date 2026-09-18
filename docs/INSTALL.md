@@ -279,6 +279,13 @@ RUST_LOG=info eeemail                      # with engine logging
 `error while loading shared libraries` means a missing webview package; see the
 Linux notes above, or use the `.AppImage`.
 
+**No spelling underlines in the composer (Linux).** The webview checks spelling
+through Enchant, which needs a spell-checking backend and a dictionary for your
+language. Neither comes with eeemail. Install Hunspell and a dictionary, such as
+`hunspell hunspell-en-gb` on Debian and Ubuntu or `hunspell hunspell-en_gb` on
+Arch, and restart eeemail. The language comes from your locale (`LANG`), and
+falls back to `en_US`. Windows uses the system's own spell checker.
+
 **Windows.** A release build has no console, so there is nothing to read from a
 terminal. If eeemail cannot start it now says why in a message box — that text
 is the thing to report. If no window and no message box appear at all, the

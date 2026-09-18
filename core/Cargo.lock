@@ -2296,6 +2296,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tokio",
+ "webkit2gtk",
  "yerpc",
 ]
 

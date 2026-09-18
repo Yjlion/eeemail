@@ -31,6 +31,7 @@ use anyhow::Result;
 
 use crate::config::Config;
 use crate::context::Context;
+use crate::message::MsgId;
 
 /// A signature, in the two forms a message can carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +40,7 @@ pub struct Signature {
     /// is not constructed.
     pub plain: String,
     /// The markup for the HTML alternative, derived when none was configured.
+    /// Empty when the HTML part already carries the signature.
     pub html: String,
 }
 
@@ -68,6 +70,31 @@ pub async fn load(context: &Context) -> Result<Option<Signature>> {
     Ok(Some(Signature { plain, html }))
 }
 
+/// The signature to append to one message, or `None` when there is nothing
+/// to append.
+///
+/// When the composer put the signature in the body, where the user could see
+/// and edit it, this is *that* signature -- as edited, split off the body by
+/// `compose::send` -- or `None` if the user removed it. Its `html` is empty,
+/// because the HTML part already carries it and is not escaped, so
+/// [`append_to_html`] leaves that part alone. Appending the configured one
+/// instead would sign the message twice and undo the user's edit.
+/// See [ADR 0032](../../../docs/adr/0032-composer-send-options.md).
+pub async fn load_for(context: &Context, msg_id: MsgId) -> Result<Option<Signature>> {
+    if super::sendopts::load(context, msg_id)
+        .await?
+        .signature_in_body
+    {
+        return Ok(super::sendopts::signature(context, msg_id)
+            .await?
+            .map(|plain| Signature {
+                plain,
+                html: String::new(),
+            }));
+    }
+    load(context).await
+}
+
 /// The HTML form of a plain-text signature.
 ///
 /// `<pre>` rather than `<br>`-joined text because a signature is aligned: the
@@ -92,6 +119,9 @@ fn default_html(plain: &str) -> String {
 /// forwarded HTML can be a whole document -- appending after `</body>` there
 /// puts the signature outside the body, where a strict renderer may drop it.
 pub fn append_to_html(html: &str, signature: &Signature) -> String {
+    if signature.html.is_empty() {
+        return html.to_string();
+    }
     let separator = "<div class=\"signature-sep\">--</div>";
     let block = format!("{separator}{}", signature.html);
     match html.rfind("</body>") {

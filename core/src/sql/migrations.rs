@@ -2942,6 +2942,25 @@ UPDATE msgs SET state=24 WHERE state=18; -- Change OutPreparing to OutFailed.
         .await?;
     }
 
+    // eeemail: the composer's per-message choices -- the padlock, and whether
+    // the body already carries the signature.
+    // docs/adr/0032-composer-send-options.md
+    inc_and_check(&mut migration_version, 175)?;
+    if dbversion < migration_version {
+        sql.execute_migration(
+            // No row means the defaults, so only a message whose sender chose
+            // something is stored.
+            "CREATE TABLE msg_send_options (
+                msg_id INTEGER PRIMARY KEY NOT NULL, -- msgs.id
+                encryption INTEGER NOT NULL DEFAULT 0, -- 0 auto, 1 required, 2 plaintext
+                signature_in_body INTEGER NOT NULL DEFAULT 0,
+                signature TEXT -- the signature split off the body, if it had one
+            ) STRICT;",
+            migration_version,
+        )
+        .await?;
+    }
+
     let new_version = sql
         .get_raw_config_int(VERSION_CFG)
         .await?

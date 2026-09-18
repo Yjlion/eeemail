@@ -31,3 +31,9 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "=2.2.2"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
 yerpc = { workspace = true }
+
+# The webview's own API, for switching on spell checking, which WebKitGTK does
+# not do by itself (see `enable_spell_checking`). Pinned to the version wry
+# already builds, so this adds no second copy of it.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "=2.0.1"

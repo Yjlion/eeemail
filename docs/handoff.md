@@ -7,7 +7,61 @@ issues #19–#26 landed after that; what they taught is in
 Seven more features landed on `seven-features` after *that*; what they taught is
 in [what the seven features taught](#what-the-seven-features-taught). The
 composer then moved onto Squire; see
-[the composer on Squire](#the-composer-on-squire).
+[the composer on Squire](#the-composer-on-squire), and was then redone to look
+like other mail clients; see [the composer redone](#the-composer-redone).
+
+## The composer redone
+
+An icon toolbar with a colour picker, Cc and Bcc on demand, attachment and
+importance as icons, a signature in the body, spell checking, and a per-message
+padlock. [ADR 0032](adr/0032-composer-send-options.md). `send_email` takes an
+eighth argument; migration 175 adds `msg_send_options`.
+
+**Upstream rewrites `-- ` in message text.** `escape_message_footer_marks`
+turns every `-- ` line into `-\u{200B}- `, so Delta Chat does not strip what
+follows as a footer. A signature left in the body therefore went out with a
+zero-width space in its separator. No client recognises that as a signature,
+and the body became base64 because of the non-ASCII character. Review did not
+catch it; `test_a_signature_in_the_body_is_not_appended_again` did. The
+composer's signature is now split off the body in `compose::send` and sent as
+the footer. **Anything that puts a `-- ` line into `text` and expects it on the
+wire intact will hit this.**
+
+**`send_email` has eleven callers in four files, not the eight 0029 counted.**
+`gpg-interop-pass.py` was found only by rereading 0029, after a `grep | head`
+cut the list short. Grep the whole tree without a limit.
+
+**The padlock's answer comes from the engine.** `get_send_readiness` replaces
+the composer's own `get_contacts` guess, which only knew whether an address
+was in the address book, not whether we held a key or whether an override made
+it strict. It creates no contacts, because it runs on every keystroke.
+
+**What was verified, and what was not.**
+- `cargo nextest` over `email::` and the migrations: 98 tests, 11 of them new.
+- The demo build driven over the DevTools protocol:
+  - Cc and Bcc reveal
+  - the padlock follows readiness and blocks Send when closed with a keyless
+    recipient
+  - colour, font and importance apply
+  - the signature is placed above a reply's quote, and removed and reinserted
+    cleanly
+  - the attachment chip adds and removes
+- `composer.png` was regenerated and is byte-stable across two runs. Three
+  other screenshots changed bytes on this machine even at `HEAD`, from renderer
+  drift, and were left as committed.
+- **The real app was launched and not driven.** A debug build ran under Xvfb
+  for 40 seconds against the Vite dev server. It did not crash. The webview
+  loaded every module, including the new composer, icons and popover, over the
+  real Tauri path. WebKitGTK loaded `libenchant`, which it only does once spell
+  checking is on, so the shell's switch took effect. The server has no mail
+  server, no Docker and no input tools, so nothing got past setup. **The
+  composer has not been used in WebKitGTK or WebView2**, and nobody has seen a
+  spelling underline.
+- **Spell checking on Linux needs a Hunspell dictionary the user installs.**
+  The dev server had none (Enchant found no backend), which is why no underline
+  could appear here. `docs/INSTALL.md` says so. The `.deb` does not depend on
+  one, and the AppImage does not bundle one.
+- **Not run: the live passes.** Their `send_email` calls were updated by hand.
 
 ## The composer on Squire
 

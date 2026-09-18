@@ -16,6 +16,7 @@
  */
 
 import type { EventHandler } from "./rpc";
+import type { RecipientSet } from "./types";
 
 const HOUR = 3600;
 const DAY = 86_400;
@@ -642,6 +643,17 @@ export class DemoRpc {
         return { mode: "deleteAfterDownload", days: 0 };
       case "get_ephemeral_default":
         return 0;
+      case "get_send_readiness": {
+        // Everyone in the demo address book has a key; anyone else does not,
+        // which is the case the padlock exists to show.
+        const set = arg<RecipientSet>(1);
+        const keyed = new Set(CONTACTS.map((c) => c.address.toLowerCase()));
+        const missing = [...set.to, ...set.cc, ...set.bcc]
+          .map((a) => a.trim())
+          .filter((a) => a && !keyed.has((/<([^>]+)>/.exec(a)?.[1] ?? a).trim().toLowerCase()));
+        return { mode: "opportunistic", missing, locked: false };
+      }
+
       case "get_config":
         // Only the keys the UI reads back into a field. Everything else is a
         // write the demo accepts and forgets, per the note below.

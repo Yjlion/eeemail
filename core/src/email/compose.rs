@@ -103,7 +103,7 @@ pub async fn set_recipients(
 /// Uses `rsplit_once` rather than byte indices: the crate forbids
 /// `clippy::string_slice`, and a display name can contain anything, including
 /// multi-byte characters that a byte index could land inside.
-fn split_addr(input: &str) -> (String, String) {
+pub(crate) fn split_addr(input: &str) -> (String, String) {
     if let Some((name, rest)) = input.rsplit_once('<')
         && let Some((addr, _)) = rest.rsplit_once('>')
     {
@@ -142,6 +142,12 @@ fn split_addr(input: &str) -> (String, String) {
 /// `html`, when given, is sent as a `text/html` alternative *beside* `text`,
 /// which stays the plain-text fallback and is never optional. See
 /// `docs/adr/0025-composed-html.md`.
+///
+/// `options` are the composer's padlock and whether the body already carries
+/// the signature. They are checked against the encryption policy *before*
+/// anything is stored, so a refused message leaves no draft behind. See
+/// [`super::sendopts`].
+#[expect(clippy::too_many_arguments)]
 pub async fn send(
     context: &Context,
     recipients: &RecipientSet,
@@ -150,6 +156,7 @@ pub async fn send(
     attachment: Option<&std::path::Path>,
     html: Option<&str>,
     importance: super::importance::Importance,
+    options: &super::sendopts::SendOptions,
 ) -> Result<MsgId> {
     ensure!(!recipients.is_empty(), "a message needs a recipient");
     let Some(primary) = recipients.to.first() else {
@@ -157,6 +164,7 @@ pub async fn send(
         // visible addressee. Refused rather than guessed at.
         bail!("a message needs at least one To: address");
     };
+    super::sendopts::check(context, recipients, options).await?;
 
     let (name, addr) = split_addr(primary.trim());
     // Prefer a key-contact when we hold one for this address. A `Single` chat
@@ -176,6 +184,16 @@ pub async fn send(
         }
     };
     let chat_id = ChatId::create_for_contact(context, contact_id).await?;
+
+    // The composer's signature, taken off the body so it can go out after a
+    // real separator rather than the escaped one upstream writes into text.
+    // See `sendopts`.
+    let (text, signature) = if options.signature_in_body {
+        super::sendopts::split_signature(text)
+    } else {
+        (text.to_string(), None)
+    };
+    let text = text.as_str();
 
     let mut msg = match attachment {
         Some(path) => {
@@ -209,6 +227,7 @@ pub async fn send(
     // Same reason as the recipients above: the id exists only once the draft
     // is persisted, and `MimeFactory` reads this back off the id.
     super::importance::set(context, msg.get_id(), importance).await?;
+    super::sendopts::set(context, msg.get_id(), options, signature.as_deref()).await?;
 
     send_msg(context, chat_id, &mut msg).await
 }
@@ -281,7 +300,7 @@ pub(crate) async fn extra_recipients(
 /// same person can be both an address-contact and a key-contact, and only the
 /// latter produces an encrypted chat. Most recently seen wins, matching how
 /// core resolves the same ambiguity on the receive path.
-async fn key_contact_for(context: &Context, addr: &str) -> Result<Option<ContactId>> {
+pub(crate) async fn key_contact_for(context: &Context, addr: &str) -> Result<Option<ContactId>> {
     context
         .sql
         .query_row_optional(

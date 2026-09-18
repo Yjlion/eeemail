@@ -55,8 +55,8 @@ use types::email::{
     JsonrpcBackupStatus, JsonrpcBlocklistEntry, JsonrpcContactCategory, JsonrpcContactDetails,
     JsonrpcEncryptionMode, JsonrpcLabel, JsonrpcMdnPolicy, JsonrpcMessageCrypto, JsonrpcMessageRow,
     JsonrpcProtection, JsonrpcRecipient, JsonrpcRecipientSet, JsonrpcSearchQuery,
-    JsonrpcServerRetention, JsonrpcStructuredObject, JsonrpcSystemTag, JsonrpcTags,
-    JsonrpcThreadItem, JsonrpcTrashed, flatten_thread,
+    JsonrpcSendOptions, JsonrpcSendReadiness, JsonrpcServerRetention, JsonrpcStructuredObject,
+    JsonrpcSystemTag, JsonrpcTags, JsonrpcThreadItem, JsonrpcTrashed, flatten_thread,
 };
 use types::events::Event;
 use types::http::HttpResponse;
@@ -3755,9 +3755,16 @@ impl CommandApi {
     /// `importance` is `"high"`, `"normal"` or `"low"`; `null` means normal,
     /// which puts no header on the message at all.
     ///
+    /// `options` are the composer's padlock and whether the body already
+    /// carries the signature; `null` means neither, which is what every
+    /// message did before the composer had them. A padlock the policy does not
+    /// allow -- cleartext where it says end-to-end only, or end-to-end to
+    /// someone with no key -- is refused here, before anything is stored. See
+    /// `docs/adr/0032-composer-send-options.md`.
+    ///
     /// **The arity of this method is load-bearing.** `yerpc` compares
-    /// positional parameter counts with `!=`, so a caller passing six
-    /// arguments to this seven-parameter method gets `invalid params` rather
+    /// positional parameter counts with `!=`, so a caller passing seven
+    /// arguments to this eight-parameter method gets `invalid params` rather
     /// than a `None` for the one it left out. Every caller moves together or
     /// none does -- including the three live-pass scripts in `scripts/`, which
     /// no CI job runs.
@@ -3771,6 +3778,7 @@ impl CommandApi {
         attachment: Option<String>,
         html: Option<String>,
         importance: Option<String>,
+        options: Option<JsonrpcSendOptions>,
     ) -> Result<u32> {
         let ctx = self.get_context(account_id).await?;
         let path = attachment.map(std::path::PathBuf::from);
@@ -3782,9 +3790,27 @@ impl CommandApi {
             path.as_deref(),
             html.as_deref(),
             parse_importance(importance.as_deref())?,
+            &options.unwrap_or_default().into(),
         )
         .await?;
         Ok(msg_id.to_u32())
+    }
+
+    /// What the composer's padlock should say for a recipient set: the
+    /// effective encryption mode, who has no key, and whether the policy
+    /// forbids sending in cleartext.
+    ///
+    /// Read-only, and creates no contacts: a composer asks this on every
+    /// keystroke in an address field.
+    async fn get_send_readiness(
+        &self,
+        account_id: u32,
+        recipients: JsonrpcRecipientSet,
+    ) -> Result<JsonrpcSendReadiness> {
+        let ctx = self.get_context(account_id).await?;
+        Ok(email::sendopts::readiness(&ctx, &recipients.into())
+            .await?
+            .into())
     }
 
     /// Marks a message as high, normal or low importance.

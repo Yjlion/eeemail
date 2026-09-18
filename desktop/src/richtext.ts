@@ -104,22 +104,66 @@ export const SIZES = [
   { label: "Huge", value: "x-large" },
 ];
 
-/** The text colours the toolbar offers. Any colour survives the filter; these are what is offered. */
-export const COLOURS = [
-  { label: "Red", value: "#c0392b" },
-  { label: "Orange", value: "#d35400" },
-  { label: "Green", value: "#1e8449" },
-  { label: "Blue", value: "#1f5fbf" },
-  { label: "Purple", value: "#7d3c98" },
-  { label: "Grey", value: "#6b7280" },
-];
-
-/** The highlight colours the toolbar offers. */
-export const HIGHLIGHTS = [
-  { label: "Yellow", value: "#fff3a3" },
-  { label: "Green", value: "#c8f0c8" },
-  { label: "Blue", value: "#cde3ff" },
-  { label: "Pink", value: "#fbd3e9" },
+/**
+ * The colours the toolbar's picker offers, for text and highlight alike, as
+ * rows of eight: greys, then each hue from dark to pale.
+ *
+ * Any colour survives the filter -- the picker also takes a custom one -- so
+ * this is what is offered, not what is allowed. The same grid serves both
+ * because that is what other clients do, and a user who picked a colour for
+ * text expects to find it again for a highlight.
+ */
+export const PALETTE: { label: string; value: string }[][] = [
+  [
+    { label: "Black", value: "#000000" },
+    { label: "Dark grey 3", value: "#434343" },
+    { label: "Dark grey 2", value: "#666666" },
+    { label: "Dark grey 1", value: "#999999" },
+    { label: "Grey", value: "#b7b7b7" },
+    { label: "Light grey 1", value: "#cccccc" },
+    { label: "Light grey 2", value: "#d9d9d9" },
+    { label: "White", value: "#ffffff" },
+  ],
+  [
+    { label: "Dark red", value: "#990000" },
+    { label: "Dark orange", value: "#b45f06" },
+    { label: "Dark yellow", value: "#bf9000" },
+    { label: "Dark green", value: "#38761d" },
+    { label: "Dark teal", value: "#134f5c" },
+    { label: "Dark blue", value: "#0b5394" },
+    { label: "Dark purple", value: "#351c75" },
+    { label: "Dark magenta", value: "#741b47" },
+  ],
+  [
+    { label: "Red", value: "#cc0000" },
+    { label: "Orange", value: "#e69138" },
+    { label: "Yellow", value: "#f1c232" },
+    { label: "Green", value: "#6aa84f" },
+    { label: "Teal", value: "#45818e" },
+    { label: "Blue", value: "#3d85c6" },
+    { label: "Purple", value: "#674ea7" },
+    { label: "Magenta", value: "#a64d79" },
+  ],
+  [
+    { label: "Light red", value: "#ea9999" },
+    { label: "Light orange", value: "#f9cb9c" },
+    { label: "Light yellow", value: "#ffe599" },
+    { label: "Light green", value: "#b6d7a8" },
+    { label: "Light teal", value: "#a2c4c9" },
+    { label: "Light blue", value: "#9fc5e8" },
+    { label: "Light purple", value: "#b4a7d6" },
+    { label: "Light magenta", value: "#d5a6bd" },
+  ],
+  [
+    { label: "Pale red", value: "#f4cccc" },
+    { label: "Pale orange", value: "#fce5cd" },
+    { label: "Pale yellow", value: "#fff2cc" },
+    { label: "Pale green", value: "#d9ead3" },
+    { label: "Pale teal", value: "#d0e0e3" },
+    { label: "Pale blue", value: "#cfe2f3" },
+    { label: "Pale purple", value: "#d9d2e9" },
+    { label: "Pale magenta", value: "#ead1dc" },
+  ],
 ];
 
 export const ALIGNMENTS = ["left", "center", "right", "justify"];

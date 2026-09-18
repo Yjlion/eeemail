@@ -43,6 +43,7 @@ Testing: [`../testing.md`](../testing.md)
 | [0029](0029-importance-travels-on-the-wire.md) | Importance is sent and read as mail headers, and absent when normal | Accepted |
 | [0030](0030-the-composer-edits-with-squire.md) | The composer edits with Squire, and sends a little more style | Accepted |
 | [0031](0031-release-artifacts-built-on-main.md) | Release artefacts are built on main and published from the tag | Accepted |
+| [0032](0032-composer-send-options.md) | The composer decides the signature and the padlock, per message | Accepted |
 
 ## Deferred
 

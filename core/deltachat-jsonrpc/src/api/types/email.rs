@@ -422,6 +422,70 @@ impl From<JsonrpcRecipientSet> for deltachat::email::compose::RecipientSet {
     }
 }
 
+/// The composer's padlock.
+#[derive(Deserialize, TypeDef, schemars::JsonSchema, Default)]
+#[serde(rename = "EncryptionChoice", rename_all = "camelCase")]
+pub enum JsonrpcEncryptionChoice {
+    /// Whatever the encryption policy decides. The default.
+    #[default]
+    Auto,
+    /// End-to-end, or refuse to send.
+    Required,
+    /// Cleartext. Refused where the policy says end-to-end only.
+    Plaintext,
+}
+
+/// The composer's choices for one message.
+#[derive(Deserialize, TypeDef, schemars::JsonSchema, Default)]
+#[serde(rename = "SendOptions", rename_all = "camelCase")]
+pub struct JsonrpcSendOptions {
+    /// The padlock.
+    #[serde(default)]
+    pub encryption: JsonrpcEncryptionChoice,
+    /// The composer placed the signature in the body -- after its last `-- `
+    /// line -- or the user removed it. Either way the configured signature is
+    /// not appended.
+    #[serde(default)]
+    pub signature_in_body: bool,
+}
+
+impl From<JsonrpcSendOptions> for deltachat::email::sendopts::SendOptions {
+    fn from(options: JsonrpcSendOptions) -> Self {
+        use deltachat::email::sendopts::EncryptionChoice;
+        Self {
+            encryption: match options.encryption {
+                JsonrpcEncryptionChoice::Auto => EncryptionChoice::Auto,
+                JsonrpcEncryptionChoice::Required => EncryptionChoice::Required,
+                JsonrpcEncryptionChoice::Plaintext => EncryptionChoice::Plaintext,
+            },
+            signature_in_body: options.signature_in_body,
+        }
+    }
+}
+
+/// What the composer's padlock should say for a recipient set.
+#[derive(Serialize, TypeDef, schemars::JsonSchema)]
+#[serde(rename = "SendReadiness", rename_all = "camelCase")]
+pub struct JsonrpcSendReadiness {
+    /// The strictest mode among the global setting and every recipient's
+    /// override.
+    pub mode: JsonrpcEncryptionMode,
+    /// Addresses we hold no key for, as typed.
+    pub missing: Vec<String>,
+    /// The policy says end-to-end only, so the padlock may not be opened.
+    pub locked: bool,
+}
+
+impl From<deltachat::email::sendopts::Readiness> for JsonrpcSendReadiness {
+    fn from(ready: deltachat::email::sendopts::Readiness) -> Self {
+        Self {
+            mode: ready.mode.into(),
+            missing: ready.missing,
+            locked: ready.locked,
+        }
+    }
+}
+
 /// What at-rest protection is actually in force.
 #[derive(Serialize, TypeDef, schemars::JsonSchema)]
 #[serde(rename = "AtRestProtection", rename_all = "camelCase")]

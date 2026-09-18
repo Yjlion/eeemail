@@ -84,6 +84,7 @@ async fn test_a_verified_contact_gets_an_encrypted_chat() -> Result<()> {
         None,
         None,
         Importance::Normal,
+        &Default::default(),
     )
     .await?;
     let sent = alice.pop_sent_msg().await;
@@ -474,6 +475,7 @@ async fn test_html_is_sent_beside_the_text_not_instead_of_it() -> Result<()> {
         None,
         Some(HTML),
         Importance::Normal,
+        &Default::default(),
     )
     .await?;
     let sent = alice.pop_sent_msg().await;
@@ -513,6 +515,7 @@ async fn test_html_survives_the_draft_round_trip() -> Result<()> {
         None,
         Some(HTML),
         Importance::Normal,
+        &Default::default(),
     )
     .await?;
     alice.pop_sent_msg().await;
@@ -549,6 +552,7 @@ async fn test_an_unformatted_message_is_unchanged() -> Result<()> {
             None,
             html,
             Importance::Normal,
+            &Default::default(),
         )
         .await?;
         let sent = alice.pop_sent_msg().await;
@@ -581,6 +585,7 @@ async fn test_html_with_an_attachment_keeps_both() -> Result<()> {
         Some(&path),
         Some(HTML),
         Importance::Normal,
+        &Default::default(),
     )
     .await?;
     let sent = alice.pop_sent_msg().await;

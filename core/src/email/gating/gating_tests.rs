@@ -316,6 +316,7 @@ async fn test_an_encrypted_reply_from_someone_you_wrote_to_is_not_held() -> Resu
         None,
         None,
         Importance::Normal,
+        &Default::default(),
     )
     .await?;
     alice.pop_sent_msg().await;
