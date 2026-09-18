@@ -84,5 +84,3 @@ export class Rpc {
     }
   }
 }
-
-export const rpc = new Rpc();
