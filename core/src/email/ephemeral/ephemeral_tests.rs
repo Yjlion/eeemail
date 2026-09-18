@@ -5,7 +5,7 @@ use anyhow::Result;
 use super::*;
 use crate::chat::send_text_msg;
 use crate::message::Message;
-use crate::test_utils::TestContextManager;
+use crate::test_utils::{TestContext, TestContextManager};
 use crate::tools::SystemTime;
 
 use super::super::tags::{self, SystemTag};
@@ -320,20 +320,96 @@ async fn test_emptying_covers_a_trashed_message_with_no_deadline() -> Result<()>
 
     // The `Trash` label alone, with no `trashed_msgs` row -- which is what a
     // label replayed from another device leaves behind, because the deadline is
-    // a local decision and is never synced. Such a message sits in the trash the
-    // user is looking at and is invisible to `purge` forever.
+    // a local decision and is never synced.
     let label = labels::reserved(&alice, TRASH).await?;
     labels::set_ext(&alice, &[msg_id], &label, true, Sync::Nosync).await?;
     assert!(trashed(&alice, msg_id).await?.is_none());
     assert_eq!(in_trash(&alice).await?, vec![msg_id]);
 
+    assert_eq!(empty(&alice).await?, 1);
+    assert!(in_trash(&alice).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_a_message_trashed_on_another_device_is_purged_in_time() -> Result<()> {
+    let mut tcm = TestContextManager::new();
+    let alice = tcm.alice().await;
+    let bob = tcm.bob().await;
+    let chat = alice.create_chat(&bob).await;
+    set_purge_days(&alice, DEFAULT_PURGE_DAYS).await?;
+    let msg_id = send_text_msg(&alice, chat.id, "from another device".to_string()).await?;
+
+    // Label only, as a sync leaves it. Before the fix this message sat in the
+    // trash forever, invisible to `purge`.
+    let label = labels::reserved(&alice, TRASH).await?;
+    labels::set_ext(&alice, &[msg_id], &label, true, Sync::Nosync).await?;
+
+    // The first pass gives it a deadline counted from now, not from some time
+    // the user never saw, so nothing is destroyed yet.
+    assert_eq!(purge(&alice).await?, 0);
+    let known = trashed(&alice, msg_id)
+        .await?
+        .expect("no deadline assigned");
+    assert_eq!(known.reason, Reason::Deleted);
+
     SystemTime::shift(std::time::Duration::from_secs(
         (DEFAULT_PURGE_DAYS as u64 + 1) * 86_400,
     ));
-    assert_eq!(purge(&alice).await?, 0, "purge should never see this one");
-
-    assert_eq!(empty(&alice).await?, 1);
+    assert_eq!(purge(&alice).await?, 1, "never purged");
     assert!(in_trash(&alice).await?.is_empty());
+    Ok(())
+}
+
+/// A message trashed here and restored on another device: the unapply takes
+/// the label off and leaves the local deadline behind.
+async fn restored_elsewhere(alice: &TestContext, text: &str) -> Result<MsgId> {
+    let bob = TestContext::new_bob().await;
+    let chat = alice.create_chat(&bob).await;
+    let msg_id = send_text_msg(alice, chat.id, text.to_string()).await?;
+    trash(alice, &[msg_id]).await?;
+    let label = labels::reserved(alice, TRASH).await?;
+    labels::set_ext(alice, &[msg_id], &label, false, Sync::Nosync).await?;
+    assert!(in_trash(alice).await?.is_empty());
+    Ok(msg_id)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_a_message_restored_on_another_device_is_not_purged() -> Result<()> {
+    let alice = TestContext::new_alice().await;
+    set_purge_days(&alice, DEFAULT_PURGE_DAYS).await?;
+    let msg_id = restored_elsewhere(&alice, "kept on purpose").await?;
+
+    SystemTime::shift(std::time::Duration::from_secs(
+        (DEFAULT_PURGE_DAYS as u64 + 1) * 86_400,
+    ));
+    assert_eq!(
+        purge(&alice).await?,
+        0,
+        "a message the user restored was destroyed on its old deadline"
+    );
+    let msg = Message::load_from_db(&alice, msg_id).await?;
+    assert_eq!(msg.get_text(), "kept on purpose");
+    assert!(
+        trashed(&alice, msg_id).await?.is_none(),
+        "stale deadline kept"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_emptying_skips_a_message_restored_on_another_device() -> Result<()> {
+    let alice = TestContext::new_alice().await;
+    let msg_id = restored_elsewhere(&alice, "kept on purpose").await?;
+
+    assert_eq!(
+        empty(&alice).await?,
+        0,
+        "emptied something not in the trash"
+    );
+    assert_eq!(destroy_now(&alice, &[msg_id]).await?, 0);
+    let msg = Message::load_from_db(&alice, msg_id).await?;
+    assert_eq!(msg.get_text(), "kept on purpose");
     Ok(())
 }
 

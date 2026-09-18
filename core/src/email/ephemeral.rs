@@ -314,13 +314,57 @@ pub async fn in_trash(context: &Context) -> Result<Vec<MsgId>> {
     labels::msgs_with(context, trash_label.id).await
 }
 
+/// Brings the deadlines in `trashed_msgs` back into line with the `Trash`
+/// label, which is what the user sees and so is the authority on what is in
+/// the trash.
+///
+/// The two drift apart through sync, because the label is synced and the
+/// deadline is deliberately not:
+///
+/// * **Trashed on another device.** The label arrives through
+///   `labels::sync_set` with no deadline, and [`purge`] would never see the
+///   message: it would sit in the trash forever. It gets a deadline here,
+///   counted from now -- the first moment this device knew it was in the
+///   trash, and never earlier than the user could have seen it there.
+/// * **Restored on another device.** The unapply takes the label off and
+///   leaves the deadline behind, and [`purge`] would destroy, on schedule, a
+///   message the user had deliberately taken out of the trash. Its row is
+///   dropped here. This one is data loss, which is why every path that
+///   destroys calls this first.
+async fn reconcile(context: &Context, now: i64) -> Result<()> {
+    let trash_label = labels::reserved(context, TRASH).await?.id;
+    let purge_at = now.saturating_add(purge_secs(context).await?);
+    context
+        .sql
+        .transaction(move |transaction| {
+            transaction.execute(
+                "DELETE FROM trashed_msgs WHERE msg_id NOT IN
+                 (SELECT msg_id FROM msg_labels WHERE label_id=?)",
+                (trash_label,),
+            )?;
+            // Only a user's deletion is synced (see `to_trash`), so a message
+            // that arrived in the trash that way was deleted.
+            transaction.execute(
+                "INSERT INTO trashed_msgs (msg_id, trashed_at, purge_at, reason)
+                 SELECT msg_id, ?2, ?3, ?4 FROM msg_labels WHERE label_id=?1
+                 ON CONFLICT(msg_id) DO NOTHING",
+                (trash_label, now, purge_at, Reason::Deleted as i64),
+            )?;
+            Ok(())
+        })
+        .await?;
+    Ok(())
+}
+
 /// Destroys trashed messages whose recoverable window has elapsed.
 ///
 /// Runs in housekeeping. The deadline is local and never synced, for the same
 /// reason [`super::gating`]'s is: a device's own clock is the only one it can
-/// reason about.
+/// reason about. [`reconcile`]d with the label first, so what is destroyed is
+/// only ever what the user can see in the trash.
 pub async fn purge(context: &Context) -> Result<usize> {
     let now = time();
+    reconcile(context, now).await?;
     let due: Vec<MsgId> = context
         .sql
         .query_map_vec(
@@ -398,6 +442,10 @@ pub async fn destroy_now(context: &Context, msgs: &[MsgId]) -> Result<usize> {
     if msgs.is_empty() {
         return Ok(0);
     }
+    // After this, having a `trashed_msgs` row and being in the trash the user
+    // sees are the same thing -- so a message restored on another device is
+    // not in the trash here either, and is skipped.
+    reconcile(context, time()).await?;
     let mut trashed = Vec::with_capacity(msgs.len());
     for &msg_id in msgs {
         let known: Option<MsgId> = context
@@ -422,25 +470,15 @@ pub async fn destroy_now(context: &Context, msgs: &[MsgId]) -> Result<usize> {
 
 /// Destroys everything in the trash now. Returns how many were destroyed.
 ///
-/// The union of [`in_trash`] and every row in `trashed_msgs`, not either alone.
-/// They are normally the same set and not always: [`to_trash`] writes both,
-/// while a `Trash` label replayed from another device arrives through
-/// `labels::sync_set` and writes only the label -- so that message carries no
-/// deadline, [`purge`] will never see it, and it sits in the trash forever.
-/// Emptying the trash has to empty what the user is looking at. The other
-/// direction, a `trashed_msgs` row whose label was taken off by hand, is
-/// covered by the same union.
+/// Exactly what the user is looking at: [`in_trash`], after [`reconcile`]. It
+/// used to take the union of the label and every `trashed_msgs` row, so that a
+/// message trashed on another device, which has only the label, was emptied
+/// too. That union also destroyed a message *restored* on another device,
+/// which has only the row: emptying the trash deleted something that was not
+/// in it.
 pub async fn empty(context: &Context) -> Result<usize> {
-    let mut ids = in_trash(context).await?;
-    let with_deadline: Vec<MsgId> = context
-        .sql
-        .query_map_vec("SELECT msg_id FROM trashed_msgs", (), |row| {
-            Ok(row.get::<_, MsgId>(0)?)
-        })
-        .await?;
-    ids.extend(with_deadline);
-    ids.sort_unstable();
-    ids.dedup();
+    reconcile(context, time()).await?;
+    let ids = in_trash(context).await?;
 
     let destroyed = destroy(context, &ids).await?;
     if destroyed > 0 {
