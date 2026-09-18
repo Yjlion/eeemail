@@ -117,3 +117,73 @@ async fn test_a_wrong_passphrase_does_not_restore() -> Result<()> {
     restored.assert_warn("IMEX failed to complete").await;
     Ok(())
 }
+
+/// Issue #1's last open question: backup tars the blobdir raw, so with blob
+/// encryption on it carries `EEEBLOB1` containers, and a restore is only
+/// readable if the key travels with them. It does -- the key is in the
+/// database, which the backup copies whole -- and this is what says so rather
+/// than "probably".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_a_restore_reads_encrypted_blobs() -> Result<()> {
+    use crate::email::{blobcrypt, rawmime, vault};
+
+    let alice = TestContext::new_alice().await;
+    alice.allow_unencrypted().await?;
+    vault::set_passphrase(&alice, "database passphrase").await?;
+    blobcrypt::enable(&alice).await?;
+
+    let raw = b"From: bob@example.net\r\n\
+To: alice@example.org\r\n\
+Subject: an attachment that survives a restore\r\n\
+Message-ID: <backup-blob@example.net>\r\n\
+Date: Mon, 31 Aug 2026 12:00:00 +0000\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"b\"\r\n\
+\r\n\
+--b\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+see attached\r\n\
+--b\r\n\
+Content-Type: text/plain; name=\"report.txt\"\r\n\
+Content-Disposition: attachment; filename=\"report.txt\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+dGhlIGFjdHVhbCBhdHRhY2htZW50\r\n\
+--b--\r\n";
+    crate::receive_imf::receive_imf(&alice, raw, false)
+        .await?
+        .unwrap();
+
+    // Encrypted on disk before the backup, or this test proves nothing.
+    let msg_id = crate::message::rfc724_mid_exists(&alice, "backup-blob@example.net")
+        .await?
+        .unwrap();
+    let msg = crate::message::Message::load_from_db(&alice, msg_id).await?;
+    let path = msg.get_file(&alice).expect("no attachment");
+    assert!(std::fs::read(&path)?.starts_with(b"EEEBLOB1"));
+
+    let dir = tempfile::tempdir()?;
+    export(&alice, dir.path(), "backup passphrase").await?;
+    let file = std::fs::read_dir(dir.path())?.next().unwrap()?.path();
+
+    let restored = TestContext::new().await;
+    import(&restored, &file, "backup passphrase").await?;
+
+    let msg_id = crate::message::rfc724_mid_exists(&restored, "backup-blob@example.net")
+        .await?
+        .expect("the message must survive the round trip");
+    let msg = crate::message::Message::load_from_db(&restored, msg_id).await?;
+    let path = msg.get_file(&restored).expect("the attachment was lost");
+    assert_eq!(
+        blobcrypt::read(&restored, &path).await?,
+        b"the actual attachment",
+        "the restored attachment cannot be read"
+    );
+    assert_eq!(
+        rawmime::load(&restored, msg_id).await?.as_deref(),
+        Some(&raw[..]),
+        "the restored original cannot be read"
+    );
+    Ok(())
+}
