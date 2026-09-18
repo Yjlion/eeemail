@@ -26,13 +26,22 @@ import type {
   Contact,
   ContactCategory,
   ContactDetails,
+  EncryptionMode,
 } from "../types";
+
+/** A contact's overrides of the account-wide settings. `null` follows them. */
+type ContactPolicy = {
+  encryption: EncryptionMode | null;
+  mdn: boolean | null;
+  timer: number | null;
+};
 
 let contacts: Contact[] = [];
 let blocked: BlocklistEntry[] = [];
 let categories: ContactCategory[] = [];
 let openDetails: ContactDetails | null = null;
 let openCategoryIds: number[] = [];
+let openPolicy: ContactPolicy | null = null;
 let categoryFilter: number | null = null;
 let qrSvg: string | null = null;
 let query = "";
@@ -50,6 +59,7 @@ export function resetContactsCache(): void {
   categories = [];
   openDetails = null;
   openCategoryIds = [];
+  openPolicy = null;
   categoryFilter = null;
   qrSvg = null;
   query = "";
@@ -76,15 +86,21 @@ async function load(): Promise<void> {
   // Only for the record that is open. Fetching a record per row would be one
   // round trip per contact to render fields the list does not show.
   if (state.selectedContactId !== null) {
-    const [details, of] = (await Promise.all([
-      rpc.call("get_contact_details", [state.accountId, state.selectedContactId]),
-      rpc.call("get_contact_categories_of", [state.accountId, state.selectedContactId]),
-    ])) as [ContactDetails, ContactCategory[]];
+    const id = state.selectedContactId;
+    const [details, of, encryption, mdn, timer] = (await Promise.all([
+      rpc.call("get_contact_details", [state.accountId, id]),
+      rpc.call("get_contact_categories_of", [state.accountId, id]),
+      rpc.call("get_contact_encryption_mode", [state.accountId, id]),
+      rpc.call("get_contact_mdn_enabled", [state.accountId, id]),
+      rpc.call("get_contact_ephemeral_timer", [state.accountId, id]),
+    ])) as [ContactDetails, ContactCategory[], EncryptionMode | null, boolean | null, number | null];
     openDetails = details;
     openCategoryIds = of.map((c) => c.id);
+    openPolicy = { encryption, mdn, timer };
   } else {
     openDetails = null;
     openCategoryIds = [];
+    openPolicy = null;
   }
   if (qrSvg === null) {
     try {
@@ -104,6 +120,61 @@ async function load(): Promise<void> {
 function selected(): Contact | null {
   if (state.selectedContactId === null) return null;
   return contacts.find((c) => c.id === state.selectedContactId) ?? null;
+}
+
+/** An `<option>`, selected when `value` is `current`. */
+function option(value: string, label: string, current: string): string {
+  return `<option value="${value}"${value === current ? " selected" : ""}>${escapeHtml(label)}</option>`;
+}
+
+/**
+ * What this contact overrides of the account-wide settings.
+ *
+ * Every override here can only *tighten*: encryption modes compose toward the
+ * strictest, receipts are off if Settings says never, and timers compose to
+ * the shortest, with "off" the longest of all. So nothing is offered that
+ * would do nothing -- a per-contact "lenient" or "never expire" would read as
+ * a choice and change no message. An override set some other way (the CLI can
+ * set any mode) is still shown, so the menu never misstates what is stored.
+ */
+function policySection(p: ContactPolicy): string {
+  const encryption = p.encryption ?? "";
+  const mdn = p.mdn === null ? "" : String(p.mdn);
+  const timer = p.timer === null ? "" : String(p.timer);
+  const storedOnly = (value: string, label: string, current: string, offered: string[]) =>
+    current === value && !offered.includes(value) ? option(value, label, current) : "";
+  return `
+    <h3 class="section">For this contact</h3>
+    <label>Encryption
+      <select data-policy="encryption">
+        ${option("", "Follow settings", encryption)}
+        ${option("strict", "End-to-end only", encryption)}
+        ${storedOnly("opportunistic", "Encrypt when possible (no effect)", encryption, ["", "strict"])}
+        ${storedOnly("lenient", "Prefer delivery (no effect)", encryption, ["", "strict"])}
+      </select>
+    </label>
+    <p class="hint">End-to-end only refuses to send them anything unencrypted, and
+      locks the composer's padlock on any message they are on.</p>
+    <label>Read receipts
+      <select data-policy="mdn">
+        ${option("", "Follow settings", mdn)}
+        ${option("true", "Send to them", mdn)}
+        ${option("false", "Never send to them", mdn)}
+      </select>
+    </label>
+    <p class="hint">If Settings says never, nobody gets one, whatever is set here.</p>
+    <label>Disappearing messages
+      <select data-policy="timer">
+        ${option("", "Follow settings", timer)}
+        ${option("3600", "1 hour", timer)}
+        ${option("86400", "1 day", timer)}
+        ${option("604800", "1 week", timer)}
+        ${option("2592000", "30 days", timer)}
+        ${storedOnly("0", "Off (no effect)", timer, ["", "3600", "86400", "604800", "2592000"])}
+      </select>
+    </label>
+    <p class="hint">Can only shorten: a conversation takes the shortest timer of
+      anyone in it, so a longer one here would change nothing.</p>`;
 }
 
 function phoneRows(d: ContactDetails): string {
@@ -188,6 +259,8 @@ function detail(c: Contact, d: ContactDetails): string {
         }
         <div class="actions"><button type="submit">Save record</button></div>
       </form>
+
+      ${openPolicy ? policySection(openPolicy) : ""}
 
       <div class="contact-actions">
         <button data-act="${c.isBlocked ? "unblock" : "block"}">
@@ -546,6 +619,28 @@ export async function renderContacts(el: HTMLElement): Promise<void> {
       }
     },
   );
+
+  // Saved on change, as in Settings: each is one choice, not a form to fill in.
+  for (const select of detailEl?.querySelectorAll<HTMLSelectElement>("select[data-policy]") ?? []) {
+    select.addEventListener("change", async () => {
+      if (!current) return;
+      const v = select.value;
+      const [method, value] =
+        select.dataset["policy"] === "encryption"
+          ? ["set_contact_encryption_mode", v === "" ? null : v]
+          : select.dataset["policy"] === "mdn"
+            ? ["set_contact_mdn_enabled", v === "" ? null : v === "true"]
+            : ["set_contact_ephemeral_timer", v === "" ? null : Number(v)];
+      try {
+        await rpc.call(method, [state.accountId, current.id, value]);
+        // Re-read rather than assumed: what is stored is what the menu shows.
+        await load();
+        changed();
+      } catch (err) {
+        fail(err);
+      }
+    });
+  }
 
   detailEl
     ?.querySelector<HTMLButtonElement>("[data-act='encryption-info']")
