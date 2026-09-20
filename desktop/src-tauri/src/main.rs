@@ -291,6 +291,8 @@ async fn run() -> Result<()> {
                     }
                 }
             });
+            #[cfg(target_os = "linux")]
+            enable_spell_checking(app);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -337,6 +339,58 @@ fn current_platform() -> Platform {
 
 fn env_var(name: &str) -> Option<String> {
     std::env::var(name).ok()
+}
+
+/// Turns on the composer's spell checking where the webview does not do it by
+/// itself.
+///
+/// WebView2 and WKWebView honour `spellcheck` on an editable element with the
+/// system's dictionaries. WebKitGTK honours it only once spell checking is
+/// switched on for the whole web context, and then only in the languages it is
+/// told -- so without this, the composer's `spellcheck="true"` does nothing on
+/// Linux and nothing says so.
+///
+/// Best-effort: a missing dictionary is a missing underline, not a reason to
+/// refuse to start.
+#[cfg(target_os = "linux")]
+fn enable_spell_checking(app: &tauri::App) {
+    use tauri::Manager as _;
+    use webkit2gtk::{WebContextExt as _, WebViewExt as _};
+
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let languages = spell_languages(
+        env_var("LC_ALL")
+            .or_else(|| env_var("LC_MESSAGES"))
+            .or_else(|| env_var("LANG")),
+    );
+    let result = window.with_webview(move |webview| {
+        if let Some(context) = webview.inner().context() {
+            context.set_spell_checking_enabled(true);
+            let languages: Vec<&str> = languages.iter().map(String::as_str).collect();
+            context.set_spell_checking_languages(&languages);
+        }
+    });
+    if let Err(err) = result {
+        eprintln!("cannot enable spell checking: {err:#}");
+    }
+}
+
+/// WebKitGTK's spell-checking language for a POSIX locale.
+///
+/// It wants `en_GB`, the locale with its encoding and modifier taken off.
+/// `C` and `POSIX` name no language at all, and an unset or empty locale is
+/// the same; those fall back to `en_US` rather than to no spell checking.
+#[cfg(any(target_os = "linux", test))]
+fn spell_languages(locale: Option<String>) -> Vec<String> {
+    let language = locale
+        .as_deref()
+        .and_then(|l| l.split(['.', '@']).next())
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && *l != "C" && *l != "POSIX")
+        .unwrap_or("en_US");
+    vec![language.to_string()]
 }
 
 /// The directory the running executable sits in, if it is marked portable.
@@ -419,6 +473,19 @@ fn first_run_marker() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_spell_languages_come_from_the_locale() {
+        let of = |l: Option<&str>| spell_languages(l.map(str::to_string));
+        assert_eq!(of(Some("en_GB.UTF-8")), ["en_GB"]);
+        assert_eq!(of(Some("de_DE@euro")), ["de_DE"]);
+        assert_eq!(of(Some("fr_FR")), ["fr_FR"]);
+        // No language named, which is not the same as "check nothing".
+        assert_eq!(of(Some("C.UTF-8")), ["en_US"]);
+        assert_eq!(of(Some("POSIX")), ["en_US"]);
+        assert_eq!(of(Some("")), ["en_US"]);
+        assert_eq!(of(None), ["en_US"]);
+    }
 
     /// Neither of the two names that reach [`safe_file_name`] is ours.
     ///

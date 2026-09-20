@@ -897,9 +897,10 @@ impl MimeFactory {
         };
         // eeemail: under the same gate as `selfstatus`. A signature is profile
         // data, and a message that is not carrying the user's status is not
-        // one the user is writing.
+        // one the user is writing. `load_for`, because the composer may have
+        // put the signature in the body already.
         let email_signature = match attach_profile_data {
-            true => crate::email::signature::load(context).await?,
+            true => crate::email::signature::load_for(context, msg.id).await?,
             false => None,
         };
         // We don't display avatars for address-contacts, so sending avatars w/o encryption is not

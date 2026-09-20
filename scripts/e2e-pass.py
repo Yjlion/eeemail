@@ -93,7 +93,7 @@ def step2_send_cc(rpc: Rpc, alice: int, bob: int, workdir: str) -> int:
 
     rpc.call("send_email", alice,
              {"to": [f"bob@{DOMAIN}"], "cc": [f"carol@{DOMAIN}"], "bcc": []},
-             SUBJECT, BODY, attachment, None, None)
+             SUBJECT, BODY, attachment, None, None, None)
 
     # Held, not delivered: alice is neither verified nor known to bob, which is
     # step 3's subject. Here it is only how we find the message.
@@ -126,7 +126,7 @@ def step2_send_cc(rpc: Rpc, alice: int, bob: int, workdir: str) -> int:
 def step2b_reply_encrypts(rpc: Rpc, alice: int, bob: int) -> None:
     """bob replies; alice's Autocrypt header means it goes out encrypted."""
     rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
-             f"Re: {SUBJECT}", "Checked -- you are right.", None, None, None)
+             f"Re: {SUBJECT}", "Checked -- you are right.", None, None, None, None)
 
     def arrived():
         ids = rpc.call("get_tagged_messages", alice, "inbox")
@@ -199,7 +199,7 @@ def step3b_securejoin(rpc: Rpc, alice: int, bob: int) -> None:
     check(True, "SecureJoin completes and alice becomes a verified key contact")
 
     rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
-             "Verified now", "This one should be encrypted.", None, None, None)
+             "Verified now", "This one should be encrypted.", None, None, None, None)
 
     def arrived():
         for candidate in rpc.call("get_tagged_messages", alice, "inbox"):
@@ -233,7 +233,7 @@ def step3c_html(rpc: Rpc, alice: int, bob: int) -> None:
     SMTP, and the alternative is assembled by `MimeFactory` on the way out.
     """
     rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
-             HTML_SUBJECT, HTML_TEXT, None, HTML_BODY, None)
+             HTML_SUBJECT, HTML_TEXT, None, HTML_BODY, None, None)
 
     def arrived():
         for candidate in rpc.call("get_tagged_messages", alice, "inbox"):
@@ -293,7 +293,7 @@ def step3d_signature(rpc: Rpc, alice: int, bob: int) -> None:
     """
     rpc.call("batch_set_config", bob, {"email_signature": SIGNATURE})
     rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
-             SIG_SUBJECT, "The body.", None, None, None)
+             SIG_SUBJECT, "The body.", None, None, None, None)
 
     msg_id = _wait_for_subject(rpc, alice, "inbox", SIG_SUBJECT,
                                "alice to receive the signed message")
@@ -315,7 +315,7 @@ def step3e_importance(rpc: Rpc, alice: int, bob: int) -> None:
     agree across a real round trip rather than in one process.
     """
     rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
-             IMPORTANT_SUBJECT, "Marked high.", None, None, "high")
+             IMPORTANT_SUBJECT, "Marked high.", None, None, "high", None)
 
     msg_id = _wait_for_subject(rpc, alice, "inbox", IMPORTANT_SUBJECT,
                                "alice to receive the important message")
@@ -342,7 +342,7 @@ def step3f_blocklist(rpc: Rpc, alice: int, bob: int) -> None:
     rpc.call("add_to_blocklist", alice, f"bob@{DOMAIN}", None)
     try:
         rpc.call("send_email", bob, {"to": [f"alice@{DOMAIN}"], "cc": [], "bcc": []},
-                 BLOCKED_SUBJECT, "Unsolicited.", None, None, None)
+                 BLOCKED_SUBJECT, "Unsolicited.", None, None, None, None)
 
         msg_id = _wait_for_subject(rpc, alice, "trash", BLOCKED_SUBJECT,
                                    "the blocked message to land in Trash")

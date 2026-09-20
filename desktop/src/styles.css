@@ -191,7 +191,6 @@ label.check { display: flex; gap: 8px; align-items: flex-start; }
 label.check input { margin-top: 4px; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 details summary { cursor: pointer; color: var(--accent); font-size: 13px; margin: 14px 0 4px; }
-.attach .hint { margin-top: 4px; }
 
 /* --- the address book ------------------------------------------------- */
 
@@ -373,24 +372,124 @@ body.preview .sidebar .brand::after { content: "preview"; }
 }
 .overlay-panel .footnote { margin-top: 10px; font-size: 12px; color: var(--text-dim); }
 
-/* --- the composer's formatting mode (ADRs 0025, 0030) ----------------- */
+/* --- the composer (ADRs 0025, 0030, 0032) ---------------------------- */
 
-.format-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-.format-toggle { display: flex; gap: 6px; align-items: center; margin: 0; font-size: 13px; color: var(--text-dim); }
-.format-toggle input { width: auto; }
-.toolbar { display: flex; gap: 4px; flex-wrap: wrap; }
-.toolbar .tool {
-  font: inherit; min-width: 30px; padding: 4px 8px; border: 1px solid var(--border);
-  border-radius: 6px; background: var(--bg-alt); cursor: pointer;
+/* The card the popovers are positioned against. */
+.composer { position: relative; }
+
+/* Address and subject rows: a label and a borderless field on one line, the
+   way mail clients lay them out, so the message is the thing with a border. */
+.composer .fields { border-bottom: 1px solid var(--border); margin-bottom: 10px; }
+.composer .field {
+  display: flex; align-items: center; gap: 8px;
+  border-top: 1px solid var(--border); padding: 2px 0;
 }
-.toolbar .tool:hover { background: #e9ebef; }
-.toolbar .tool[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-.toolbar .tool-menu {
-  font: inherit; padding: 4px 6px; border: 1px solid var(--border);
-  border-radius: 6px; background: var(--bg-alt); cursor: pointer;
+.composer .field label { margin: 0; min-width: 52px; font-size: 13px; color: var(--text-dim); }
+.composer .field input {
+  flex: 1; min-width: 0; padding: 7px 2px; border: 0; background: none;
+  font: inherit; color: var(--text);
 }
-/* The first menu starts a second group: character styles apart from structure. */
-.toolbar .tool + .tool-menu { margin-left: 8px; }
+.composer .field input:focus-visible { outline: none; }
+.composer .field:focus-within { border-top-color: var(--accent); }
+.field-links { display: flex; gap: 4px; }
+button.link {
+  font: inherit; font-size: 13px; border: 0; background: none; color: var(--text-dim);
+  padding: 2px 6px; border-radius: 4px; cursor: pointer;
+}
+button.link:hover { background: var(--bg-alt); color: var(--text); text-decoration: underline; }
+
+/* Icon buttons, in the toolbar and the send bar alike. */
+.composer .tool {
+  display: inline-flex; align-items: center; justify-content: center; gap: 1px;
+  min-width: 32px; height: 32px; padding: 0 6px; border: 0; border-radius: 6px;
+  background: none; color: #444a55; font: inherit; cursor: pointer;
+}
+.composer .tool:hover:not(:disabled) { background: #e9ebef; }
+.composer .tool[aria-pressed="true"], .composer .tool[aria-expanded="true"] {
+  background: var(--accent-soft); color: var(--accent);
+}
+.composer .tool:disabled { opacity: .45; cursor: default; }
+.composer .tool .icon { flex: none; }
+.font-label { font-size: 13px; min-width: 70px; text-align: left; padding-left: 2px; }
+
+/* The formatting toolbar sits under the message, above the send bar. */
+.toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+  padding: 3px 4px; margin-top: 8px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg-alt);
+}
+.tool-group { display: flex; align-items: center; gap: 1px; }
+.tool-group + .tool-group { border-left: 1px solid var(--border); padding-left: 3px; margin-left: 2px; }
+
+/* The padlock and the importance flag say something when they are not in
+   their default state, and say it in colour. */
+.composer .tool#lock[aria-pressed="true"] { background: var(--good-bg); color: var(--good); }
+.composer .tool#lock.warn { background: var(--warn-bg); color: var(--warn); }
+.composer .tool#importance[data-level="high"] { background: #fef2f2; color: #b91c1c; }
+.composer .tool#importance[data-level="low"] { background: #eff6ff; color: var(--accent); }
+
+.send-bar { display: flex; align-items: center; gap: 4px; margin-top: 10px; }
+.send-bar .spacer { flex: 1; }
+.send-bar .send {
+  font: inherit; font-weight: 600; padding: 7px 22px; margin-right: 6px;
+  border: 0; border-radius: 18px; background: var(--accent); color: #fff; cursor: pointer;
+}
+.send-bar .send:hover:not(:disabled) { background: #1d4ed8; }
+.send-bar .send:disabled { opacity: .55; cursor: default; }
+
+.crypto-note { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; color: var(--text-dim); }
+.crypto-note:empty { display: none; }
+.crypto-note.good { color: var(--good); }
+.crypto-note.warn { color: var(--warn); }
+
+/* The attachment, as a chip under the message. */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 4px 4px 4px 9px; border: 1px solid var(--border); border-radius: 16px;
+  background: var(--bg-alt); font-size: 13px;
+}
+.chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.chip-size { color: var(--text-dim); white-space: nowrap; }
+.chip-remove {
+  display: inline-flex; border: 0; background: none; padding: 3px; border-radius: 50%;
+  color: var(--text-dim); cursor: pointer;
+}
+.chip-remove:hover { background: #e2e4e8; color: var(--text); }
+
+/* Menus dropping from the toolbar. */
+.popover {
+  position: absolute; z-index: 10; padding: 6px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, .14);
+}
+.popover.menu { display: flex; flex-direction: column; min-width: 150px; }
+.popover.menu.row { flex-direction: row; min-width: 0; }
+.menu-item {
+  display: flex; align-items: center; gap: 6px; padding: 6px 10px; border: 0;
+  border-radius: 5px; background: none; font: inherit; color: var(--text);
+  text-align: left; cursor: pointer; white-space: nowrap;
+}
+.menu-item:hover, .menu-item:focus-visible { background: var(--bg-alt); outline: none; }
+.menu-item[aria-checked="true"] { color: var(--accent); }
+.menu-check { display: inline-flex; width: 14px; }
+.colour-menu { display: flex; gap: 14px; padding: 10px; }
+.colour-column { display: flex; flex-direction: column; gap: 4px; }
+.colour-title { font-size: 12px; font-weight: 600; color: var(--text-dim); }
+.swatches { display: grid; grid-template-columns: repeat(8, 18px); gap: 3px; }
+.swatch {
+  width: 18px; height: 18px; padding: 0; border: 1px solid rgba(0, 0, 0, .15);
+  border-radius: 3px; cursor: pointer;
+}
+.swatch:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
+.custom-colour { display: flex; align-items: center; gap: 6px; margin: 2px 0 0; font-size: 12px; color: var(--text-dim); }
+/* Specific enough to beat the form rule for `label input`, which would make
+   the native colour well a full-width text box. */
+.popover .custom-colour input[type="color"] {
+  display: inline-block; width: 28px; height: 20px; margin: 0; padding: 0;
+  border: 0; background: none; cursor: pointer;
+}
+
 /* The formatted body. Styled to match the textarea it replaces, so switching
    mode does not move the message around the screen. */
 .rich {

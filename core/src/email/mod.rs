@@ -20,6 +20,7 @@ pub mod rawmime;
 pub mod receipts;
 pub mod recipients;
 pub mod search;
+pub mod sendopts;
 pub mod signature;
 pub mod structured;
 pub mod tags;

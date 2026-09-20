@@ -47,16 +47,12 @@ export const state = {
   screen: null as Screen,
   messageIds: [] as number[],
   selectedMsgId: null as number | null,
-  /** Prefilled when the composer is opened as a reply. */
-  composerDraft: null as null | {
-    to: string;
-    cc: string;
-    bcc: string;
-    subject: string;
-    body: string;
-    /** The formatted body, when the draft came from formatted mode. */
-    html: string | null;
-  },
+  /**
+   * The message being written. Prefilled when the composer is opened as a
+   * reply, and kept up to date as the user types, so a repaint puts the
+   * composer back as it was rather than as it was opened.
+   */
+  composerDraft: null as null | ComposerDraft,
   /** Which contact the contacts screen has open, if any. */
   selectedContactId: null as number | null,
   /** How many messages are waiting in the unverified view, for the sidebar badge. */
@@ -126,3 +122,30 @@ export function applyHash(): boolean {
   }
   return false;
 }
+
+/** Everything the composer needs to put itself back after a repaint. */
+export type ComposerDraft = {
+  to: string;
+  cc: string;
+  bcc: string;
+  subject: string;
+  body: string;
+  /** The formatted body, when the draft is in formatted mode. */
+  html: string | null;
+  /** Cc and Bcc rows opened by the user; a row with content is shown regardless. */
+  showCc?: boolean;
+  showBcc?: boolean;
+  importance?: "high" | "normal" | "low";
+  /**
+   * The padlock, once the user has touched it. Unset means it follows whether
+   * everyone has a key, which is what it should do until someone decides.
+   */
+  encrypt?: boolean;
+  /**
+   * The composer has placed the signature, so it must not place it again. Set
+   * even if the user then deleted it: that was their decision, not a gap.
+   */
+  signed?: boolean;
+  /** The one file this message carries. */
+  attachment?: File | null;
+};

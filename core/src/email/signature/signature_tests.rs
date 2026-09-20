@@ -33,6 +33,7 @@ async fn sent_payload(alice: &TestContext, to: &str, text: &str, html: Option<&s
         None,
         html,
         Importance::Normal,
+        &Default::default(),
     )
     .await
     .expect("send failed");
