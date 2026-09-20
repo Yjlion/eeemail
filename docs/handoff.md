@@ -717,6 +717,17 @@ empties what the user can see. That covers the symptom; it does not fix the
 gap. A message in that state is still invisible to housekeeping. Guarded by
 `ephemeral_tests::test_emptying_covers_a_trashed_message_with_no_deadline`.
 
+**Fixed 2026-09-18, along with a worse bug in the other direction.** The union
+also destroyed messages *restored* on another device: the unapply takes the
+label off, the local `trashed_msgs` row stays, and both `purge` (on the old
+deadline) and `empty` destroyed a message the user had taken out of the trash.
+`ephemeral::reconcile` now runs first in `purge`, `empty` and `destroy_now`.
+The label is the authority. A labelled message with no row gets a deadline
+counted from now, and a row with no label is dropped. `empty` is just
+`in_trash()` again. Guarded by `test_a_message_trashed_on_another_device_is_purged_in_time`,
+`test_a_message_restored_on_another_device_is_not_purged` and
+`test_emptying_skips_a_message_restored_on_another_device`.
+
 ### Adding a contact does not release their held mail
 
 `Contact::create` reaches `add_or_lookup`, which writes the new origin with a
@@ -890,7 +901,9 @@ unless something was decrypted, so `store` takes `imf_raw` too.
 - **Issue #2** — upstream drops recipients whose key is missing from the
   envelope while leaving them in the header. eeemail records who, and does not
   change the behaviour.
-- **Camera QR scanning is not wired up.** Paste and file are the working paths.
+- **Camera QR scanning is not wired up.** Paste is the only working path. This
+  line used to say "paste and file", but there has never been a file input for
+  a QR code (issue #4).
 - **Attachments are one per message**, because core carries one file per
   message. The composer says so rather than hiding it.
 - **Nothing has been audited.**
@@ -921,6 +934,27 @@ making it a phase-sized job rather than the afternoon its row implies.
 One bug was found that no issue covered: `Message::save_file` copied blobs
 byte-for-byte, so "save attachment" wrote an `EEEBLOB1` container when blob
 encryption was on. Fixed.
+
+## The issue tracker, swept again 2026-09-18
+
+**Eight more were stale.** All of #19–#26 had landed, as the section above
+records, and none had been closed. They are closed now, each with a comment
+naming the code that fixed it. Read the code before trusting an open issue.
+
+Also in that pass:
+- **#1:** its last open question was whether a backup restores readable
+  attachments and originals with blob encryption on. It does, and
+  `backup_tests::test_a_restore_reads_encrypted_blobs` now says so rather than
+  "probably". What remains is `webxdc.rs` opening blob paths directly, which
+  belongs to #6.
+- **#4:** narrowed to what is really missing: camera scanning, and reading a
+  QR code from an image file. Per-contact encryption, read-receipt and timer
+  overrides now have a UI in the contact record. It offers only choices that
+  change something, because every override composes toward the stricter side.
+- **Demo build:** `rpc.ts` ended with a module-level `new Rpc()` that nothing
+  imported. It threw `transformCallback` in the demo build, and in the real app
+  it registered a second `rpc-message` listener that parsed every engine
+  message a second time. Removed.
 
 ## Suggested next steps, in order
 
