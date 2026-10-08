@@ -1,3 +1,5 @@
+# I have moved to a ground up port at https://github.com/Yjlion/e3mail
+
 # eeemail
 
 An end-to-end encrypted email client with classic email functionality.
